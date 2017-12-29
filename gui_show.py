@@ -74,8 +74,11 @@ class Application(_tk.Frame):
     # The pooler function is an experimental visualization transformation.
     self._pooler = None
 
-    # The 'real' pipline fucntion.
+    # The 'real' pipline function.
     self._pipeline = None
+
+    # The classifier func.
+    self._classifier = None
 
     # Load the camera un-distort function.
     self._undistort = _pipeline.getUndistortFunc(self._logger)
@@ -110,6 +113,18 @@ class Application(_tk.Frame):
     # Whether to use 'sensitive mode'.
     self.sensitiveVar = _tk.IntVar(master=frame, value=0)
     _tk.Checkbutton(master=frame, variable=self.sensitiveVar, text='Use Sensitive Settings', command=self._sensitiveToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
+
+    frame = _tk.Frame(master=self, borderwidth=3)
+    frame.pack(fill=_tk.X, side=_tk.TOP, padx=padx, pady=0)
+
+    self.modelVar = _tk.IntVar(master=frame, value=0)
+    _tk.Checkbutton(master=frame, variable=self.modelVar, text='Use Model', command=self._modelToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
+    self.flipVar = _tk.IntVar(master=frame, value=0)
+    _tk.Checkbutton(master=frame, variable=self.flipVar, text='Flip Horizontally', command=self._flipToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
+    self.mulFlipVar = _tk.IntVar(master=frame, value=0)
+    _tk.Checkbutton(master=frame, variable=self.mulFlipVar, text='Multiply Flip', command=self._mulFlipToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
+    self.addFlipVar = _tk.IntVar(master=frame, value=0)
+    _tk.Checkbutton(master=frame, variable=self.addFlipVar, text='Add Flip', command=self._addFlipToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
 
     frame = _tk.Frame(master=self, borderwidth=3)
     frame.pack(fill=_tk.X, side=_tk.TOP, padx=padx, pady=0)
@@ -388,107 +403,33 @@ class Application(_tk.Frame):
     self._setImageSize(dy, dx)
 
     usePipeline = self.pipelineVar.get() != 0
-    if usePipeline and self._pipeline is None:
-      # Get the pipline function.
-      self._pipeline = _pipeline.getPipelineFunc(self._logger, pixels.shape, self._perspective, self.sensitiveVar.get() != 0)
+    useModel = self.modelVar.get() != 0
+    if usePipeline:
+      if self._pipeline is None:
+        # Get the pipline function.
+        self._pipeline = _pipeline.getPipelineFunc(self._logger, pixels.shape, self._perspective, self.sensitiveVar.get() != 0)
+    elif useModel:
+      if self._classifier is None:
+        import model as _model
+        self._classifier = _model.getModelFunc1(scale=4)
 
     # Do the transformations, and time it.
     t0 = time.time()
 
     if usePipeline:
-      # Remember the original, in case we need to overlay.
-      src = pixels
-
-      # Run the pipeline.
-      pixels, lineInfo = self._pipeline(pixels)
-
-      # Prep the main image.
-      overlay = self.overlayVar.get() != 0
-      persp = self.perspAfterVar.get() != 0
-      if overlay:
-        pixels = self._undistort(src)
-        if persp:
-          pixels = self._perspective.do(pixels)
-      else:
-        pixels = _xforms.standardize(pixels)
-        if not persp:
-          pixels = self._perspective.undo(pixels)
-
-      # Draw the lane lines.
-      drawLines = True
-      if drawLines and (lineInfo.coefsLeft is not None or lineInfo.coefsRight is not None):
-        buf = np.zeros_like(pixels)
-        ptsList = []
-
-        # Draw them.
-        ys = np.linspace(0, pixels.shape[0] - 1, pixels.shape[0])
-        ys2 = np.square(ys)
-        coefs = lineInfo.coefsLeft
-        if coefs is not None:
-          xs = coefs[0] * ys2 + coefs[1] * ys + coefs[2]
-          pts = np.int32(np.stack((xs, ys[::-1]), axis=1))
-          ptsList.append(pts)
-        coefs = lineInfo.coefsRight
-        if coefs is not None:
-          xs = coefs[0] * ys2 + coefs[1] * ys + coefs[2]
-          pts = np.int32(np.stack((xs, ys[::-1]), axis=1))
-          ptsList.append(pts)
-
-        assert 1 <= len(ptsList) <= 2
-        useFill = True
-        if useFill and len(ptsList) == 2:
-          pts = np.concatenate((ptsList[0], ptsList[1][::-1]), axis=0)
-          cv2.fillPoly(buf, [pts], (0, 0xFF, 0))
-        else:
-          cv2.polylines(buf, ptsList, isClosed=False, color=(0, 0xFF, 0), thickness=15)
-
-        # Draw the raw 'fit' points, using colored circles.
-        drawRaw = True
-        if drawRaw:
-          for i, pts in enumerate((lineInfo.ptsLeft, lineInfo.ptsRight)):
-            if pts is None:
-              continue
-            assert isinstance(pts, tuple) and len(pts) == 2
-            assert len(pts[0]) == len(pts[1])
-            clr = (0xFF, 0, 0) if i == 0 else (0, 0, 0xFF)
-            for x, y in zip(pts[0], pts[1]):
-              cv2.circle(buf, (int(x), int(dy - 1 - y)), 5, clr, -1)
-
-        if not persp:
-          buf = self._perspective.undo(buf)
-        if overlay:
-          pixels = cv2.addWeighted(pixels, 1, buf, 0.3, 0)
-        else:
-          # If we're drawing on the pipeline image, just average the image and line display.
-          pixels = cv2.addWeighted(pixels, 0.5, buf, 0.5, 0)
-
-        # Draw the statistics.
-        printStats = True
-        if printStats:
-          fnt = cv2.FONT_HERSHEY_DUPLEX
-          curv0 = lineInfo.curvatureLeft
-          curv1 = lineInfo.curvatureRight
-          curvm = lineInfo.curvatureMean
-          offset = lineInfo.offset
-
-          ht = 30
-          def _fmt(val):
-            return "" if val is None else "{:+8.6f}".format(val)
-          def _fmtr(val):
-            return "" if val is None or abs(val) <= 0.00001 else "{:+8.2f}".format(1.0 / val)
-
-          def _put(row, x, text):
-            cv2.putText(pixels, text,  (x, row * ht), fnt, 1, (0xFF, 0, 0))
-          lft = 10
-          mid = dx // 2
-          _put(1, lft, " Left curvature: {} / m".format(_fmt(curv0)))
-          _put(1, mid, " Left radius: {} m".format(_fmtr(curv0)))
-          _put(2, lft, "Right curvature: {} / m".format(_fmt(curv1)))
-          _put(2, mid, "Right radius: {} m".format(_fmtr(curv1)))
-          _put(3, lft, "Mean curvature: {} / m".format(_fmt(curvm)))
-          _put(3, mid, "Mean radius: {} m".format(_fmtr(curvm)))
-          _put(4, lft, "Offset: {} m".format(_fmt(offset)))
-
+      pixels = self._getPipelineImage(pixels)
+    elif useModel:
+      if self.flipVar.get() != 0:
+        pixels = pixels[:, ::-1, :]
+      buf = self._classifier(pixels)
+      if self.mulFlipVar.get() != 0:
+        buf1 = self._classifier(pixels[:, ::-1, :])
+        buf = np.multiply(buf, buf1[:, ::-1])
+      elif self.addFlipVar.get() != 0:
+        buf1 = self._classifier(pixels[:, ::-1, :])
+        buf = np.add(buf, buf1[:, ::-1])
+      buf = _xforms.standardize(buf)
+      pixels = cv2.addWeighted(pixels, 0.5, buf, 0.5, 0)
     else:
       # Use transform controls instead of pipeline.
 
@@ -579,6 +520,106 @@ class Application(_tk.Frame):
     if self._writer is not None:
       self._writer.append_data(self._pixels)
 
+  def _getPipelineImage(self, pixels):
+    assert self._pipeline is not None
+
+    dy, dx, _ = pixels.shape
+
+    # Remember the original, in case we need to overlay.
+    src = pixels
+
+    # Run the pipeline.
+    pixels, lineInfo = self._pipeline(pixels)
+
+    # Prep the main image.
+    overlay = self.overlayVar.get() != 0
+    persp = self.perspAfterVar.get() != 0
+    if overlay:
+      pixels = self._undistort(src)
+      if persp:
+        pixels = self._perspective.do(pixels)
+    else:
+      pixels = _xforms.standardize(pixels)
+      if not persp:
+        pixels = self._perspective.undo(pixels)
+
+    # Draw the lane lines.
+    drawLines = True
+    if drawLines and (lineInfo.coefsLeft is not None or lineInfo.coefsRight is not None):
+      buf = np.zeros_like(pixels)
+      ptsList = []
+
+      # Draw them.
+      ys = np.linspace(0, pixels.shape[0] - 1, pixels.shape[0])
+      ys2 = np.square(ys)
+      coefs = lineInfo.coefsLeft
+      if coefs is not None:
+        xs = coefs[0] * ys2 + coefs[1] * ys + coefs[2]
+        pts = np.int32(np.stack((xs, ys[::-1]), axis=1))
+        ptsList.append(pts)
+      coefs = lineInfo.coefsRight
+      if coefs is not None:
+        xs = coefs[0] * ys2 + coefs[1] * ys + coefs[2]
+        pts = np.int32(np.stack((xs, ys[::-1]), axis=1))
+        ptsList.append(pts)
+
+      assert 1 <= len(ptsList) <= 2
+      useFill = True
+      if useFill and len(ptsList) == 2:
+        pts = np.concatenate((ptsList[0], ptsList[1][::-1]), axis=0)
+        cv2.fillPoly(buf, [pts], (0, 0xFF, 0))
+      else:
+        cv2.polylines(buf, ptsList, isClosed=False, color=(0, 0xFF, 0), thickness=15)
+
+      # Draw the raw 'fit' points, using colored circles.
+      drawRaw = True
+      if drawRaw:
+        for i, pts in enumerate((lineInfo.ptsLeft, lineInfo.ptsRight)):
+          if pts is None:
+            continue
+          assert isinstance(pts, tuple) and len(pts) == 2
+          assert len(pts[0]) == len(pts[1])
+          clr = (0xFF, 0, 0) if i == 0 else (0, 0, 0xFF)
+          for x, y in zip(pts[0], pts[1]):
+            cv2.circle(buf, (int(x), int(dy - 1 - y)), 5, clr, -1)
+
+      if not persp:
+        buf = self._perspective.undo(buf)
+      if overlay:
+        pixels = cv2.addWeighted(pixels, 1, buf, 0.3, 0)
+      else:
+        # If we're drawing on the pipeline image, just average the image and line display.
+        pixels = cv2.addWeighted(pixels, 0.5, buf, 0.5, 0)
+
+      # Draw the statistics.
+      printStats = True
+      if printStats:
+        fnt = cv2.FONT_HERSHEY_DUPLEX
+        curv0 = lineInfo.curvatureLeft
+        curv1 = lineInfo.curvatureRight
+        curvm = lineInfo.curvatureMean
+        offset = lineInfo.offset
+
+        ht = 30
+        def _fmt(val):
+          return "" if val is None else "{:+8.6f}".format(val)
+        def _fmtr(val):
+          return "" if val is None or abs(val) <= 0.00001 else "{:+8.2f}".format(1.0 / val)
+
+        def _put(row, x, text):
+          cv2.putText(pixels, text, (x, row * ht), fnt, 1, (0xFF, 0, 0))
+        lft = 10
+        mid = dx // 2
+        _put(1, lft, " Left curvature: {} / m".format(_fmt(curv0)))
+        _put(1, mid, " Left radius: {} m".format(_fmtr(curv0)))
+        _put(2, lft, "Right curvature: {} / m".format(_fmt(curv1)))
+        _put(2, mid, "Right radius: {} m".format(_fmtr(curv1)))
+        _put(3, lft, "Mean curvature: {} / m".format(_fmt(curvm)))
+        _put(3, mid, "Mean radius: {} m".format(_fmtr(curvm)))
+        _put(4, lft, "Offset: {} m".format(_fmt(offset)))
+
+    return pixels
+
   def _undistortToggle(self):
     self._setImage()
 
@@ -622,6 +663,18 @@ class Application(_tk.Frame):
     # Toss the current pipeline, so it gets recreated.
     self._pipeline = None
     self._setImage()
+
+  def _modelToggle(self):
+    self._drawGuidesToggle()
+
+  def _flipToggle(self):
+    self._drawGuidesToggle()
+
+  def _mulFlipToggle(self):
+    self._drawGuidesToggle()
+
+  def _addFlipToggle(self):
+    self._drawGuidesToggle()
 
   def nextData(self):
     self._data.next()

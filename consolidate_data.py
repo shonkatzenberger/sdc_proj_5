@@ -26,6 +26,14 @@ def loadRawImages(path, shape=None):
   print("Read {} images of shape {}".format(len(images), shape))
   return np.stack(images, axis=0)
 
+def loadData():
+  dataVeh = np.load('../Data/vehicles.npy')
+  dataNon = np.load('../Data/non-vehicles.npy')
+  assert len(dataVeh.shape) == 4
+  assert len(dataNon.shape) == 4
+  assert dataVeh.shape[1:] == dataNon.shape[1:]
+  return dataVeh, dataNon
+
 def _run():
   dataVeh = loadRawImages('../Data/vehicles/vehicles', shape=(64, 64, 3))
   dataNon = loadRawImages('../Data/non-vehicles/non-vehicles', shape=(64, 64, 3))
