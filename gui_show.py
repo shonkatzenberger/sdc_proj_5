@@ -371,12 +371,14 @@ class Application(_tk.Frame):
     elif self._writer is not None:
       self._writer.close()
       self._writer = None
+      self._logger.info("Closed video writer")
 
   def _stop(self):
     self.runVar.set(0)
     if self._writer is not None:
       self._writer.close()
       self._writer = None
+      self._logger.info("Closed video writer")
     if self._data is not None:
       self._data.setRunning(self._running)
 
@@ -431,6 +433,7 @@ class Application(_tk.Frame):
       pixels = self._getPipelineImage(pixels)
     elif useModel:
       # Use the vehicle detection model.
+      pixels = self._undistort(pixels)
       pixels = self._getModelImage(pixels)
     else:
       # Use transform controls instead of pipeline.
@@ -624,7 +627,8 @@ class Application(_tk.Frame):
 
   def _getModelImage(self, pixels):
     # scales = (1, 1.5, 2, 3, 4)
-    scales = (1, 1.5, 2, 3)
+    # scales = (1, 1.5, 2, 3)
+    scales = (0.5, 1, 1.5, 2)
     if self._getVehicleRects is None:
       import model as _model
       self._getVehicleRects = _model.getModelRectsMultiFunc(scales=scales, flip=True)

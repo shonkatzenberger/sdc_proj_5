@@ -28,11 +28,11 @@ def _loadAndSplitData(rand, frac=0.9, useFlips=True, mono=False):
     for i in range(xs.shape[0]):
       xsNew[i] = cv2.cvtColor(xs[i], cv2.COLOR_RGB2GRAY)
     xs = np.reshape(xsNew, newshape=xsNew.shape + (1,))
-  # else:
-  #   xsNew = np.zeros_like(xs)
-  #   for i in range(xs.shape[0]):
-  #     xsNew[i] = cv2.cvtColor(xs[i], cv2.COLOR_RGB2Lab)
-  #   xs = xsNew
+  else:
+    xsNew = np.zeros_like(xs)
+    for i in range(xs.shape[0]):
+      xsNew[i] = cv2.cvtColor(xs[i], cv2.COLOR_RGB2Lab)
+    xs = xsNew
 
   # Generate a random permutation of the data.
   indices = rand.permutation(num)
@@ -147,7 +147,7 @@ def _run():
     print("Validation accuracy and loss before: {:.03f}, {:.03f}".format(acc / num, loss / num))
 
     batchSize = 64
-    _trainMulti(sess, 3, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.00100, batchSize=batchSize)
+    _trainMulti(sess, 5, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.00100, batchSize=batchSize)
     _trainMulti(sess, 3, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.00030, batchSize=batchSize)
     _trainMulti(sess, 3, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.00010, batchSize=batchSize)
     # _trainMulti(sess, 5, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.00005, batchSize=batchSize)
