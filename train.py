@@ -2,23 +2,37 @@
 #pylint: disable=C0103
 
 import time
+import cv2
 import numpy as np
 import tensorflow as tf
 
 import model as _model
 
-def _loadAndSplitData(rand, frac=0.9, useFlips=True, varyColors=True):
+def _loadAndSplitData(rand, frac=0.9, useFlips=True, mono=False):
   dataVeh = np.load('../Data/vehicles.npy')
   dataNon = np.load('../Data/non-vehicles.npy')
   assert len(dataVeh.shape) == 4
   assert len(dataNon.shape) == 4
   assert dataVeh.shape[1:] == dataNon.shape[1:]
+  print(dataVeh.shape, dataVeh.dtype)
+  print(dataNon.shape, dataNon.dtype)
 
   xs = np.concatenate((dataVeh, dataNon), axis=0)
   ys = np.concatenate((np.ones(shape=(dataVeh.shape[0],), dtype=np.float32), np.zeros(shape=(dataNon.shape[0],), dtype=np.float32)))
 
   assert xs.shape[0] == ys.shape[0]
   num = xs.shape[0]
+
+  if mono:
+    xsNew = np.zeros(shape=xs.shape[:-1], dtype=np.uint8)
+    for i in range(xs.shape[0]):
+      xsNew[i] = cv2.cvtColor(xs[i], cv2.COLOR_RGB2GRAY)
+    xs = np.reshape(xsNew, newshape=xsNew.shape + (1,))
+  # else:
+  #   xsNew = np.zeros_like(xs)
+  #   for i in range(xs.shape[0]):
+  #     xsNew[i] = cv2.cvtColor(xs[i], cv2.COLOR_RGB2Lab)
+  #   xs = xsNew
 
   # Generate a random permutation of the data.
   indices = rand.permutation(num)
@@ -28,15 +42,11 @@ def _loadAndSplitData(rand, frac=0.9, useFlips=True, varyColors=True):
   xs0, ys0, xs1, ys1 = xs[inds0], ys[inds0], xs[inds1], ys[inds1]
 
   if useFlips:
-    xs0 = np.concatenate((xs0, xs0[:, ::-1, :]), axis=0)
+    xs0 = np.concatenate((xs0, xs0[:, :, ::-1, :]), axis=0)
     ys0 = np.concatenate((ys0, ys0), axis=0)
     # REVIEW shonk: Any reason to also augment the validation set?
-    # xs1 = np.concatenate((xs1, xs1[:, ::-1, :]), axis=0)
-    # ys1 = np.concatenate((ys1, ys1), axis=0)
-
-  if varyColors:
-    xs0 = np.concatenate((xs0, xs0[:, :, [0, 2, 1]], xs0[:, :, [1, 0, 2]], xs0[:, :, [1, 2, 0]], xs0[:, :, [2, 0, 1]], xs0[:, :, [2, 1, 0]]), axis=0)
-    ys0 = np.concatenate((ys0, ys0, ys0, ys0, ys0, ys0), axis=0)
+    xs1 = np.concatenate((xs1, xs1[:, :, ::-1, :]), axis=0)
+    ys1 = np.concatenate((ys1, ys1), axis=0)
 
   return xs0, ys0, xs1, ys1
 
@@ -125,7 +135,7 @@ def _run():
       acc, loss, num = _eval(sess, xsValid, ysValid, batchSize)
       print("    Validation accuracy and loss: {:.03f}, {:.03f}".format(acc / num, loss / num))
 
-  featuresTrain, labelsTrain, featuresValid, labelsValid = _loadAndSplitData(rand, frac=0.9, useFlips=True)
+  featuresTrain, labelsTrain, featuresValid, labelsValid = _loadAndSplitData(rand, frac=0.9)
 
   with tf.Session() as sess:
     sess.run(tf.global_variables_initializer())
@@ -137,9 +147,9 @@ def _run():
     print("Validation accuracy and loss before: {:.03f}, {:.03f}".format(acc / num, loss / num))
 
     batchSize = 64
-    _trainMulti(sess, 5, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.00100, batchSize=batchSize)
-    _trainMulti(sess, 5, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.00030, batchSize=batchSize)
-    # _trainMulti(sess, 5, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.00010, batchSize=batchSize)
+    _trainMulti(sess, 3, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.00100, batchSize=batchSize)
+    _trainMulti(sess, 3, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.00030, batchSize=batchSize)
+    _trainMulti(sess, 3, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.00010, batchSize=batchSize)
     # _trainMulti(sess, 5, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.00005, batchSize=batchSize)
 
     _model.saveModelWeights(sess, weights)

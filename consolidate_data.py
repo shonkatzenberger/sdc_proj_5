@@ -21,6 +21,9 @@ def loadRawImages(path, shape=None):
     elif shape != pixels.shape:
       print("Shape mismatch: {} vs {}".format(shape, pixels.shape))
       continue
+    if pixels.dtype != np.uint8:
+      print("Converting image '{}' with max {}".format(file, pixels.max()))
+      pixels = pixels.astype(np.uint8)
     images.append(pixels)
 
   print("Read {} images of shape {}".format(len(images), shape))

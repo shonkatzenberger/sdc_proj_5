@@ -13,7 +13,6 @@ def buildModel(rand, src=None, batchSize=1, shape=(64, 64, 3), weights=None):
   assert len(shape) == 3
   assert shape[0] % _spatialShrinkFactor == 0, "Bad size: {}".format(shape)
   assert shape[1] % _spatialShrinkFactor == 0, "Bad size: {}".format(shape)
-  assert shape[2] == 3
 
   if weights is None:
     weights = collections.OrderedDict()
@@ -114,7 +113,7 @@ def getModelRectsMultiFunc(scales=(1, 1.5, 2, 3, 4), flip=True):
   for scale in scales:
     if scale == 4:
       # 128 pixels.
-      yLimBase = 720 - 128
+      yLimBase = 720 - 96
       fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(2 * 128, 1280), yLim=yLimBase))
       fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(2 * 128, 1280 - 128), yLim=yLimBase))
       fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(1 * 128, 1280), yLim=yLimBase - 64))
@@ -122,36 +121,50 @@ def getModelRectsMultiFunc(scales=(1, 1.5, 2, 3, 4), flip=True):
     elif scale == 3:
       # 96 pixels.
       yLimBase = 720 - 96
-      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(3 * 96, 1280 - 32), yLim=yLimBase))
-      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(3 * 96, 1280 - 32 - 96), yLim=yLimBase))
+      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(2 * 96, 1280 - 32), yLim=yLimBase))
+      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(2 * 96, 1280 - 32 - 96), yLim=yLimBase))
       fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(2 * 96, 1280 - 32), yLim=yLimBase - 48))
       fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(2 * 96, 1280 - 32 - 96), yLim=yLimBase - 48))
     elif scale == 2:
       # 64 pixels.
       yLimBase = 720 - 128
-      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(4 * 64, 1280), yLim=yLimBase))
-      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(4 * 64, 1280 - 64), yLim=yLimBase))
+      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(3 * 64, 1280), yLim=yLimBase))
+      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(3 * 64, 1280 - 64), yLim=yLimBase))
       fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(3 * 64, 1280), yLim=yLimBase - 32))
       fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(3 * 64, 1280 - 64), yLim=yLimBase - 32))
     elif scale == 1.5:
       # 48 pixels.
-      yLimBase = 720 - 128 - 64
-      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(4 * 48, 1280 - 80), yLim=yLimBase, xOffset=-12))
-      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(4 * 48, 1280 - 80), yLim=yLimBase, xOffset=12))
+      yLimBase = 720 - 128 - 32
+      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(3 * 48, 1280 - 80), yLim=yLimBase, xOffset=-12))
+      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(3 * 48, 1280 - 80), yLim=yLimBase, xOffset=12))
       fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(3 * 48, 1280 - 80), yLim=yLimBase - 24, xOffset=-12))
       fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(3 * 48, 1280 - 80), yLim=yLimBase - 24, xOffset=12))
     elif scale == 1:
       # 32 pixels.
       yLimBase = 720 - 128 - 64
-      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(4 * 32, 1280 - 128), yLim=yLimBase))
-      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(4 * 32, 1280 - 128 - 32), yLim=yLimBase))
-      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(4 * 32, 1280 - 128), yLim=yLimBase - 16))
-      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(4 * 32, 1280 - 128 - 32), yLim=yLimBase - 16))
+      dx = 128
+      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(4 * 32, 1280 - dx), yLim=yLimBase))
+      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(4 * 32, 1280 - dx - 32), yLim=yLimBase))
+      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(4 * 32, 1280 - dx), yLim=yLimBase - 16))
+      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(4 * 32, 1280 - dx - 32), yLim=yLimBase - 16))
+    elif scale == 0.5:
+      # 16 pixels.
+      yLimBase = 720 - 128 - 64
+      dx = 128
+      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(8 * 16, 1280 - dx), yLim=yLimBase))
+      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(8 * 16, 1280 - dx - 16), yLim=yLimBase))
+      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(8 * 16, 1280 - dx), yLim=yLimBase - 8))
+      fns.append(getModelRectsFunc(scale=scale, sess=sess, shapeInpFull=(8 * 16, 1280 - dx - 16), yLim=yLimBase - 8))
     else:
       # Use defaults.
       fns.append(getModelRectsFunc(scale=scale, sess=sess))
 
   def _do(src):
+    assert src.shape == (720, 1280, 3)
+    # src = cv2.cvtColor(src, cv2.COLOR_RGB2GRAY)
+    # src = np.reshape(src, newshape=(720, 1280, 1))
+    # src = cv2.cvtColor(src, cv2.COLOR_RGB2Lab)
+
     rects = []
     for fn in fns:
       fn(src, rects)
@@ -206,19 +219,21 @@ def getModelRectsFunc(scale=1, shapeSrc=(720, 1280), shapeInpFull=(640, 1280), y
   # print(scaleToSrc)
 
   # REVIEW shonk: What threshold should we use?
-  g_outClip = _tf.cast(_tf.greater(_tf.sigmoid(g_out), 0.98), _tf.float32)
+  g_outClip = _tf.cast(_tf.greater(_tf.sigmoid(g_out), 0.70), _tf.float32)
   g_outRes = _tf.reshape(g_outClip, shape=shapeOut)
 
   if sess is None:
     sess = _tf.Session()
 
   def _do(src, rects=None):
-    assert src.shape == shapeSrc + (3,)
+    assert src.shape[:2] == shapeSrc
 
     inp = src[yMin:yLim, xMin:xLim, :]
     assert inp.shape[:2] == shapeInpFull
     if shapeInp != shapeInpFull:
       inp = cv2.resize(inp, shapeInp[::-1])
+      if len(inp.shape) == 2:
+        inp = inp[:, :, None]
     assert inp.shape[:2] == shapeInp
 
     fd = {g_inp: inp[None, :, :, :]}
@@ -260,7 +275,7 @@ class HeatMap(object):
     assert len(self._deltas) == len(self._weights) - 1
 
     # REVIEW shonk: What should the threshold be?
-    self._thresh = 5 * sum(self._weights)
+    self._thresh = 4 * sum(self._weights)
 
     self._rects = collections.deque()
     # Use ints so round off isn't an issue (we need associativity, which floating point doesn't have).
@@ -286,7 +301,7 @@ class HeatMap(object):
     self._adjustHeat(rects, self._weights[0])
     self._rects.appendleft(rects)
     assert len(self._rects) <= len(self._weights)
-    print("New Max: {}".format(self._heat.max()))
+    # print("New Max: {}".format(self._heat.max()))
 
   def _adjustHeat(self, rects, value):
     assert isinstance(rects, tuple)
@@ -312,13 +327,17 @@ class HeatMap(object):
 
     q = self._spatialQuant
     rects = []
+    dzMin = 48
     for i in range(1, count + 1):
       ys, xs = (labels == i).nonzero()
       rc = ((q * min(xs), q * min(ys)), (q * (max(xs) + 1), q * (max(ys) + 1)))
+      if rc[1][0] - rc[0][0] < dzMin or rc[1][1] - rc[0][1] < dzMin:
+        print("Rejected: {}".format(rc))
+        continue
       rects.append(rc)
 
-      tmp = self._heat[labels == i]
-      print("Min/max for {} is {}/{}".format(rc, tmp.min(), tmp.max()))
+      # tmp = self._heat[labels == i]
+      # print("Min/max for {} is {}/{}".format(rc, tmp.min(), tmp.max()))
 
     return rects
 

@@ -323,8 +323,9 @@ class Application(_tk.Frame):
     self._stop()
     f = _dlg.asksaveasfilename(
       parent=self, title='Save Video As', filetypes=(("Video", ".mp4"),))
-    if f is None:
+    if f is None or f == '':
       return
+
     root, ext = os.path.splitext(f)
     # Default to .mp4
     if ext == '':
@@ -623,7 +624,7 @@ class Application(_tk.Frame):
 
   def _getModelImage(self, pixels):
     # scales = (1, 1.5, 2, 3, 4)
-    scales = (1, 2, 4)
+    scales = (1, 1.5, 2, 3)
     if self._getVehicleRects is None:
       import model as _model
       self._getVehicleRects = _model.getModelRectsMultiFunc(scales=scales, flip=True)
