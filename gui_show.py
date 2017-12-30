@@ -10,7 +10,6 @@
 
 import os
 import sys
-import collections
 import logging
 import time
 
@@ -23,10 +22,7 @@ import PIL.Image as _img
 import PIL.ImageTk as _imgtk
 import numpy as np
 
-# The transforms are for experimental visualization.
-import xforms as _xforms
-
-# The 'real' functionality is the the pipeline.py module.
+# The lane finding functionality is the the pipeline.py module.
 import pipeline as _pipeline
 
 # pylint: disable=missing-docstring
@@ -66,18 +62,10 @@ class Application(_tk.Frame):
     self._image = None
     self._imagetk = None
 
-    # The current transforms to apply.
-    self._fnXform = self.xformMap[self.xformVar.get()]
-    self._fnDeriv = self.derivMap[self.derivVar.get()]
-    self._thresh = self.threshMap[self.threshVar.get()]
-
-    # The pooler function is an experimental visualization transformation.
-    self._pooler = None
-
-    # The 'real' pipline function.
+    # The lane finding function.
     self._pipeline = None
 
-    # The classifier func.
+    # The vehicle detection func and heat map object.
     self._getVehicleRects = None
     self._heatMap = None
 
@@ -104,119 +92,33 @@ class Application(_tk.Frame):
     # To run through the frames.
     self.runVar = _tk.IntVar(master=frame, value=0)
     _tk.Checkbutton(master=frame, variable=self.runVar, text='Run', command=self._runToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
-
-    # Used to apply the pipeline, rather than individual experimental transformations. This overrides the other controls below.
-    self.pipelineVar = _tk.IntVar(master=frame, value=0)
-    _tk.Checkbutton(master=frame, variable=self.pipelineVar, text='Use Pipeline', command=self._pipelineToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
-    # Whether to overlay onto the source image (rather than show the raw pipeline output image).
-    self.overlayVar = _tk.IntVar(master=frame, value=0)
-    _tk.Checkbutton(master=frame, variable=self.overlayVar, text='Overlay Pipeline Result', command=self._overlayToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
-    # Whether to use 'sensitive mode'.
-    self.sensitiveVar = _tk.IntVar(master=frame, value=0)
-    _tk.Checkbutton(master=frame, variable=self.sensitiveVar, text='Use Sensitive Settings', command=self._sensitiveToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
-
-    frame = _tk.Frame(master=self, borderwidth=3)
-    frame.pack(fill=_tk.X, side=_tk.TOP, padx=padx, pady=0)
-
-    self.modelVar = _tk.IntVar(master=frame, value=0)
-    _tk.Checkbutton(master=frame, variable=self.modelVar, text='Use Model', command=self._modelToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
+    _tk.Button(master=frame, text='Reset', command=self._resetState).pack(side=_tk.LEFT, padx=padx, pady=pady)
     self.flipVar = _tk.IntVar(master=frame, value=0)
     _tk.Checkbutton(master=frame, variable=self.flipVar, text='Flip Horizontally', command=self._flipToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
-    self.mulFlipVar = _tk.IntVar(master=frame, value=0)
-    _tk.Checkbutton(master=frame, variable=self.mulFlipVar, text='Multiply Flip', command=self._mulFlipToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
-    self.addFlipVar = _tk.IntVar(master=frame, value=0)
-    _tk.Checkbutton(master=frame, variable=self.addFlipVar, text='Add Flip', command=self._addFlipToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
-    self.showHeatVar = _tk.IntVar(master=frame, value=0)
-    _tk.Checkbutton(master=frame, variable=self.showHeatVar, text='Show Heat', command=self._showHeatToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
-    self.showBoundsVar = _tk.IntVar(master=frame, value=0)
-    _tk.Checkbutton(master=frame, variable=self.showBoundsVar, text='Show Bounds', command=self._showBoundsToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
-
-    frame = _tk.Frame(master=self, borderwidth=3)
-    frame.pack(fill=_tk.X, side=_tk.TOP, padx=padx, pady=0)
-
-    # To draw perspective guide lines.
-    self.drawGuidesVar = _tk.IntVar(master=frame, value=0)
-    _tk.Checkbutton(master=frame, variable=self.drawGuidesVar, text='Draw guides', command=self._drawGuidesToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
-
     # To adjust for camera distortion.
     self.undistortVar = _tk.IntVar(master=frame, value=0)
     _tk.Checkbutton(master=frame, variable=self.undistortVar, text='Undistort', command=self._undistortToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
 
-    # Used to apply perspective before the transforms.
-    self.perspBeforeVar = _tk.IntVar(master=frame, value=0)
-    _tk.Checkbutton(master=frame, variable=self.perspBeforeVar, text='Perspective Before', command=self._perspToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
+    frame = _tk.Frame(master=self, borderwidth=3)
+    frame.pack(fill=_tk.X, side=_tk.TOP, padx=padx, pady=0)
 
-    # Some color and composite transformations.
-    self.xformMap = collections.OrderedDict()
-    self.xformMap["none"] = _xforms.none
-    self.xformMap["combo"] = _xforms.combo
-    self.xformMap["red"] = _xforms.red
-    self.xformMap["green"] = _xforms.green
-    self.xformMap["blue"] = _xforms.blue
-    self.xformMap["gray"] = _xforms.gray
-    self.xformMap["hsv"] = _xforms.hsv
-    self.xformMap["hsv - h"] = _xforms.hsv_h
-    self.xformMap["hsv - s"] = _xforms.hsv_s
-    self.xformMap["hsv - v"] = _xforms.hsv_v
-    self.xformMap["hsv - sv"] = _xforms.hsv_sv
-    self.xformMap["hsv - vs"] = _xforms.hsv_vs
-    self.xformMap["hsv - sv min"] = _xforms.hsv_sv_min
-    self.xformMap["hsv - sv avg"] = _xforms.hsv_sv_avg
-    self.xformMap["hsv - sv mask"] = _xforms.hsv_sv_mask
-    self.xformMap["hls"] = _xforms.hls
-    self.xformMap["hls - h"] = _xforms.hls_h
-    self.xformMap["hls - l"] = _xforms.hls_l
-    self.xformMap["hls - s"] = _xforms.hls_s
-    self.xformMap["hls - ls"] = _xforms.hls_ls
-    self.xformMap["lab"] = _xforms.lab
-    self.xformMap["lab - l"] = _xforms.lab_l
-    self.xformMap["lab - a"] = _xforms.lab_a
-    self.xformMap["lab - b"] = _xforms.lab_b
-    self.xformMap["luv"] = _xforms.luv
-    self.xformMap["luv - l"] = _xforms.luv_l
-    self.xformMap["luv - u"] = _xforms.luv_u
-    self.xformMap["lab - v"] = _xforms.luv_v
-    self.xformMap["YCrCb"] = _xforms.ycrcb
-    self.xformMap["YCrCb - y"] = _xforms.ycrcb_y
-    self.xformMap["YCrCb - cr"] = _xforms.ycrcb_cr
-    self.xformMap["YCrCb - cb"] = _xforms.ycrcb_cb
-    self.xformVar = _tk.StringVar(master=frame, value="none")
-    _tk.OptionMenu(frame, self.xformVar, *self.xformMap.keys(), command=self._changeXform).pack(side=_tk.LEFT, padx=padx, pady=pady)
+    # Whether to apply the lane finding pipeline.
+    self.pipelineVar = _tk.IntVar(master=frame, value=0)
+    _tk.Checkbutton(master=frame, variable=self.pipelineVar, text='Lane Finding', command=self._pipelineToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
+    # Whether to use 'sensitive mode'.
+    self.sensitiveVar = _tk.IntVar(master=frame, value=0)
+    _tk.Checkbutton(master=frame, variable=self.sensitiveVar, text='Sensitive', command=self._sensitiveToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
 
-    # For applying a combination pooling transform and thresholding the result.
-    # When this is active (not 'none'), we divide each 'pixel' by the max of its left and right mean pool values.
-    # This hightlights local maxima. Note that this only makes sense after perspective is applied, since the pooling
-    # assumes uniform scale in each of the x and y directions (but not necessarily the same scale).
-    self.threshMap = collections.OrderedDict()
-    self.threshMap["none"] = -1.0
-    self.threshMap["0.0"] = 0.0
-    self.threshMap["1.0"] = 1.0
-    self.threshMap["1.1"] = 1.1
-    self.threshMap["1.2"] = 1.2
-    self.threshMap["1.3"] = 1.3
-    self.threshMap["1.4"] = 1.4
-    self.threshMap["1.5"] = 1.5
-    self.threshMap["1.7"] = 1.7
-    self.threshMap["2.0"] = 2.0
-    self.threshVar = _tk.StringVar(master=frame, value="none")
-    _tk.OptionMenu(frame, self.threshVar, *self.threshMap.keys(), command=self._changeThresh).pack(side=_tk.LEFT, padx=padx, pady=pady)
+    frame = _tk.Frame(master=self, borderwidth=3)
+    frame.pack(fill=_tk.X, side=_tk.TOP, padx=padx, pady=0)
 
-    # Some derivative transformations.
-    self.derivMap = collections.OrderedDict()
-    self.derivMap["none"] = _xforms.none
-    self.derivMap["combo after LS pool"] = _xforms.comboAfterPool
-    self.derivMap["sobel x"] = _xforms.sobel_x
-    self.derivMap["sobel y"] = _xforms.sobel_y
-    self.derivMap["sobel norm"] = _xforms.sobel_norm
-    self.derivMap["laplacian"] = _xforms.laplace
-    self.derivMap["hog8"] = _xforms.hog8
-    self.derivMap["hog16"] = _xforms.hog16
-    self.derivVar = _tk.StringVar(master=frame, value="none")
-    _tk.OptionMenu(frame, self.derivVar, *self.derivMap.keys(), command=self._changeDeriv).pack(side=_tk.LEFT, padx=padx, pady=pady)
-
-    # Used to apply perspective after the transforms. Unlike the above, this is functional when the pipeline is used.
-    self.perspAfterVar = _tk.IntVar(master=frame, value=0)
-    _tk.Checkbutton(master=frame, variable=self.perspAfterVar, text='Perspective After', command=self._perspToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
+    # Whether to apply the vehicle detection model.
+    self.modelVar = _tk.IntVar(master=frame, value=0)
+    _tk.Checkbutton(master=frame, variable=self.modelVar, text='Vehicle Detection', command=self._modelToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
+    self.showHeatVar = _tk.IntVar(master=frame, value=0)
+    _tk.Checkbutton(master=frame, variable=self.showHeatVar, text='Show Heat', command=self._showHeatToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
+    self.showBoundsVar = _tk.IntVar(master=frame, value=0)
+    _tk.Checkbutton(master=frame, variable=self.showBoundsVar, text='Show Bounds', command=self._showBoundsToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
 
     # Information about the current image.
     frame = _tk.LabelFrame(master=self, text='Item', borderwidth=3)
@@ -242,11 +144,6 @@ class Application(_tk.Frame):
     _tk.Label(master=frame, text='Time:').grid(row=row, column=0, padx=padx, sticky=_tk.E)
     self.timeLabel = _tk.Label(master=frame, text='', anchor=_tk.W)
     self.timeLabel.grid(row=row, column=1, sticky=_tk.W)
-    row += 1
-
-    _tk.Label(master=frame, text='Extra:').grid(row=row, column=0, padx=padx, sticky=_tk.E)
-    self.extraLabel = _tk.Label(master=frame, text='', anchor=_tk.W)
-    self.extraLabel.grid(row=row, column=1, sticky=_tk.W)
     row = None
 
     frame = _tk.Frame(master=self, borderwidth=3)
@@ -304,14 +201,14 @@ class Application(_tk.Frame):
     if self._pixels is None:
       return
     f = _dlg.asksaveasfilename(
-      parent=self, title='Save Image As', filetypes=(("Image", ".jpg"),))
-    if f is None:
+      parent=self, title='Save Image As', filetypes=(("Image", ".png"),))
+    if f is None or f == '':
       return
     root, ext = os.path.splitext(f)
-    # Default to .jpg.
+    # Default to .png.
     if ext == '':
       assert root == f
-      f += '.jpg'
+      f += '.png'
     imageio.imwrite(f, self._pixels)
 
   def saveVideo(self):
@@ -403,8 +300,7 @@ class Application(_tk.Frame):
       self._dy = dy
       self._dx = dx
 
-      # Forget any old pipeline or pooler function and get the new perspective.
-      self._pooler = None
+      # Forget any old pipeline function and get the new perspective.
       self._pipeline = None
       self._getVehicleRects = None
       self._heatMap = None
@@ -420,59 +316,33 @@ class Application(_tk.Frame):
 
     usePipeline = self.pipelineVar.get() != 0
     useModel = self.modelVar.get() != 0
-    if usePipeline:
-      if self._pipeline is None:
-        # Get the pipline function.
-        self._pipeline = _pipeline.getPipelineFunc(self._logger, pixels.shape, self._perspective, self.sensitiveVar.get() != 0)
+
+    if usePipeline and self._pipeline is None:
+      self._pipeline = _pipeline.getPipelineFunc(pixels.shape, self._perspective, self.sensitiveVar.get() != 0)
+    if useModel and self._getVehicleRects is None:
+      import model as _model
+      scales = (0.5, 1, 1.5, 2)
+      self._getVehicleRects = _model.getModelRectsMultiFunc(scales=scales, flip=True)
+      self._heatMap = None
 
     # Do the transformations, and time it.
     t0 = time.time()
 
-    if usePipeline:
-      # Use the lane detection pipeline.
-      pixels = self._getPipelineImage(pixels)
-    elif useModel:
-      # Use the vehicle detection model.
+    if self.flipVar.get() != 0:
+      pixels = pixels[:, ::-1, :]
+
+    if usePipeline or useModel or self.undistortVar.get() != 0:
       pixels = self._undistort(pixels)
-      pixels = self._getModelImage(pixels)
-    else:
-      # Use transform controls instead of pipeline.
 
-      # Undistort the image.
-      if self.undistortVar.get() != 0:
-        pixels = self._undistort(pixels)
+    if usePipeline:
+      _, lineInfo = self._pipeline(pixels)
+    if useModel:
+      rects = self._getVehicleRects(pixels)
 
-      # Apply perpective before the pooling, if specified.
-      persp1 = self.perspBeforeVar.get() != 0
-      if persp1:
-        pixels = self._perspective.do(pixels)
-
-      # Perform the color / combo transform.
-      pixels = self._fnXform(pixels)
-
-      # Handle the threshold pooling.
-      if self._thresh >= 0:
-        if self._pooler is None:
-          # This divides each pixel by the max of the two one-sided (left and right) mean pools. This highlights
-          # pixels that are larger than both one-sided averages.
-          self._pooler = _xforms.getComboPooler(pixels.shape, pixels.dtype)
-        pixels = self._pooler(pixels)
-        if self._thresh > 0:
-          pixels = _xforms.aboveAbs(pixels, self._thresh)
-
-      # Apply the derivative transform.
-      pixels = self._fnDeriv(pixels)
-
-      # Standardize to three-channel, uint8 based image.
-      pixels = _xforms.standardize(pixels)
-
-      # Apply perspective after, if specified. If perspective was applied before, this undoes it.
-      persp2 = self.perspAfterVar.get() != 0
-      if persp2:
-        if persp1:
-          pixels = self._perspective.undo(pixels)
-        else:
-          pixels = self._perspective.do(pixels)
+    if usePipeline:
+      pixels = self._drawLaneInfo(pixels, lineInfo)
+    if useModel:
+      pixels = self._drawVehiclInfo(pixels, rects)
 
     # Get the total time for the transformations.
     dt = time.time() - t0
@@ -512,45 +382,15 @@ class Application(_tk.Frame):
     self.dimsLabel.config(text="{0} by {1}".format(dx, dy))
     self.timeLabel.config(text="{:6.02f}".format(dt * 1000))
 
-    # The 'extra' stuff isn't used for this project.
-    extra = self._data.extra
-    assert extra is None or isinstance(extra, tuple)
-    if extra is None or len(extra) == 0:
-      self.extraLabel.config(text="")
-    else:
-      text = ', '.join('{}'.format(x) for x in extra)
-      self.extraLabel.config(text=text)
-
     # Write out the frame if we are saving video.
     if self._writer is not None:
       self._writer.append_data(self._pixels)
 
-  def _getPipelineImage(self, pixels):
-    assert self._pipeline is not None
-
+  def _drawLaneInfo(self, pixels, lineInfo, printStats=True, drawRaw=False):
     dy, dx, _ = pixels.shape
 
-    # Remember the original, in case we need to overlay.
-    src = pixels
-
-    # Run the pipeline.
-    pixels, lineInfo = self._pipeline(pixels)
-
-    # Prep the main image.
-    overlay = self.overlayVar.get() != 0
-    persp = self.perspAfterVar.get() != 0
-    if overlay:
-      pixels = self._undistort(src)
-      if persp:
-        pixels = self._perspective.do(pixels)
-    else:
-      pixels = _xforms.standardize(pixels)
-      if not persp:
-        pixels = self._perspective.undo(pixels)
-
     # Draw the lane lines.
-    drawLines = True
-    if drawLines and (lineInfo.coefsLeft is not None or lineInfo.coefsRight is not None):
+    if lineInfo.coefsLeft is not None or lineInfo.coefsRight is not None:
       buf = np.zeros_like(pixels)
       ptsList = []
 
@@ -577,7 +417,6 @@ class Application(_tk.Frame):
         cv2.polylines(buf, ptsList, isClosed=False, color=(0, 0xFF, 0), thickness=15)
 
       # Draw the raw 'fit' points, using colored circles.
-      drawRaw = True
       if drawRaw:
         for i, pts in enumerate((lineInfo.ptsLeft, lineInfo.ptsRight)):
           if pts is None:
@@ -588,16 +427,10 @@ class Application(_tk.Frame):
           for x, y in zip(pts[0], pts[1]):
             cv2.circle(buf, (int(x), int(dy - 1 - y)), 5, clr, -1)
 
-      if not persp:
-        buf = self._perspective.undo(buf)
-      if overlay:
-        pixels = cv2.addWeighted(pixels, 1, buf, 0.3, 0)
-      else:
-        # If we're drawing on the pipeline image, just average the image and line display.
-        pixels = cv2.addWeighted(pixels, 0.5, buf, 0.5, 0)
+      buf = self._perspective.undo(buf)
+      pixels = cv2.addWeighted(pixels, 1, buf, 0.3, 0, dst=pixels)
 
       # Draw the statistics.
-      printStats = True
       if printStats:
         fnt = cv2.FONT_HERSHEY_DUPLEX
         curv0 = lineInfo.curvatureLeft
@@ -625,19 +458,7 @@ class Application(_tk.Frame):
 
     return pixels
 
-  def _getModelImage(self, pixels):
-    # scales = (1, 1.5, 2, 3, 4)
-    # scales = (1, 1.5, 2, 3)
-    scales = (0.5, 1, 1.5, 2)
-    if self._getVehicleRects is None:
-      import model as _model
-      self._getVehicleRects = _model.getModelRectsMultiFunc(scales=scales, flip=True)
-      self._heatMap = None
-
-    if self.flipVar.get() != 0:
-      pixels = pixels[:, ::-1, :]
-
-    rects = self._getVehicleRects(pixels)
+  def _drawVehiclInfo(self, pixels, rects):
     showHeat = self.showHeatVar.get() != 0
     showBounds = self.showBoundsVar.get() != 0
     if showHeat or showBounds:
@@ -649,10 +470,10 @@ class Application(_tk.Frame):
 
       if showBounds:
         bounds = self._heatMap.getBounds()
-        pixels = np.copy(pixels)
         for pt0, pt1 in bounds:
           cv2.rectangle(pixels, pt0, pt1, (0, 0, 0xFF), 3)
       else:
+        # REVIEW shonk: Implement this?
         # m = heat.max()
         # # thresh = max(m / 3, 4)
         # thresh = 2
@@ -662,10 +483,8 @@ class Application(_tk.Frame):
 
         # pixels = np.uint8(heat * 255)
         # pixels = _xforms.standardize(pixels)
-        # REVIEW shonk: Implement!
         pass
     else:
-      pixels = np.copy(pixels)
       for pt0, pt1 in rects:
         cv2.rectangle(pixels, pt0, pt1, (0xFF, 0, 0), 3)
 
@@ -674,38 +493,17 @@ class Application(_tk.Frame):
   def _undistortToggle(self):
     self._setImage()
 
-  def _changeXform(self, value):
-    self._fnXform = self.xformMap[value]
-    # Since the tranform comes before the pooler, it can affect the dtype that the pooler needs to handle.
-    self._pooler = None
+  def _resetState(self):
+    self._pipeline = None
+    self._getVehicleRects = None
+    self._heatMap = None
     self._setImage()
 
-  def _changeDeriv(self, value):
-    self._fnDeriv = self.derivMap[value]
-    self._setImage()
-
-  def _changeThresh(self, value):
-    self._thresh = self.threshMap[value]
-    self._setImage()
-
-  def _drawGuidesToggle(self):
-    """ Handle when the 'Draw guides' check box is toggled. """
-    self.canvas.delete(_tk.ALL)
-    self._setImage()
-    if self.drawGuidesVar.get() != 0:
-      hasPersp = (self.perspBeforeVar.get() != 0 and self.pipelineVar.get() == 0) != (self.perspAfterVar.get() != 0)
-      pts = self._perspective.dstPoints if hasPersp else self._perspective.srcPoints
-      self.canvas.create_line(pts[3, 0], pts[3, 1], pts[0, 0], pts[0, 1], fill='red', width=3.0)
-      self.canvas.create_line(pts[0, 0], pts[0, 1], pts[1, 0], pts[1, 1], fill='red', width=3.0)
-      self.canvas.create_line(pts[1, 0], pts[1, 1], pts[2, 0], pts[2, 1], fill='red', width=3.0)
-      self.canvas.create_line(pts[2, 0], pts[2, 1], pts[3, 0], pts[3, 1], fill='red', width=3.0)
-
-  def _perspToggle(self):
-    # When perspective changes, we need to recreate the guide lines.
-    self._drawGuidesToggle()
+  def _flipToggle(self):
+    self._resetState()
 
   def _pipelineToggle(self):
-    self._drawGuidesToggle()
+    self._setImage()
 
   def _overlayToggle(self):
     self._setImage()
@@ -716,15 +514,6 @@ class Application(_tk.Frame):
     self._setImage()
 
   def _modelToggle(self):
-    self._drawGuidesToggle()
-
-  def _flipToggle(self):
-    self._setImage()
-
-  def _mulFlipToggle(self):
-    self._setImage()
-
-  def _addFlipToggle(self):
     self._setImage()
 
   def _showHeatToggle(self):

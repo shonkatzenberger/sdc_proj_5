@@ -1,4 +1,4 @@
-""" This file contains the image pipeline. """
+""" This file contains the lane finding pipeline. """
 
 import os
 import pickle
@@ -6,9 +6,6 @@ import numpy as np
 import cv2
 
 # pylint: disable=C0103
-
-# REVIEW shonk: For some reason, pylint can't see members of cv2, so disable 'Module <...> has no <...> member'.
-# pylint: disable=E1101
 
 # Caches the undistort function (closure).
 _undistort = None
@@ -110,9 +107,9 @@ class Perspective(object):
 # This constructs and returns our main pipeline image transform function.
 # The function accepts an image and returns a single-channel float32 'image',
 # as well as a LaneLineInfo object.
-def getPipelineFunc(logger, shape, perspective=None, sensitive=False):
+def getPipelineFunc(shape, perspective=None, sensitive=False):
   """ Returns a function that performs the pipeline transformations, including:
-  * Undistort the image (adjust for camera distortion).
+  * Undistorting the image is assumed to already have been don..
   * Apply perspective.
   * Convert to appropriate color space(s). The final form uses the V channel of HSV
     and the S channel of HLS, for reasons explained in the writeup.
@@ -138,9 +135,6 @@ def getPipelineFunc(logger, shape, perspective=None, sensitive=False):
 
   # The input should have 3 channels.
   assert len(shape) == 3 and shape[2] == 3
-
-  # Get the undistort function.
-  undistort = getUndistortFunc(logger)
 
   # Get the perspective mapper, it it wasn't supplied.
   if perspective is None:
@@ -255,9 +249,6 @@ def getPipelineFunc(logger, shape, perspective=None, sensitive=False):
   def _do(pixels):
     assert pixels.shape == shape
     assert pixels.dtype == np.uint8
-
-    # Undistort
-    pixels = undistort(pixels)
 
     # Apply perspective
     pixels = perspective.do(pixels)
