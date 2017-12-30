@@ -7,7 +7,7 @@ import tensorflow as tf
 
 import model as _model
 
-def _loadAndSplitData(rand, frac=0.9, useFlips=True):
+def _loadAndSplitData(rand, frac=0.9, useFlips=True, varyColors=True):
   dataVeh = np.load('../Data/vehicles.npy')
   dataNon = np.load('../Data/non-vehicles.npy')
   assert len(dataVeh.shape) == 4
@@ -30,8 +30,13 @@ def _loadAndSplitData(rand, frac=0.9, useFlips=True):
   if useFlips:
     xs0 = np.concatenate((xs0, xs0[:, ::-1, :]), axis=0)
     ys0 = np.concatenate((ys0, ys0), axis=0)
-    xs1 = np.concatenate((xs1, xs1[:, ::-1, :]), axis=0)
-    ys1 = np.concatenate((ys1, ys1), axis=0)
+    # REVIEW shonk: Any reason to also augment the validation set?
+    # xs1 = np.concatenate((xs1, xs1[:, ::-1, :]), axis=0)
+    # ys1 = np.concatenate((ys1, ys1), axis=0)
+
+  if varyColors:
+    xs0 = np.concatenate((xs0, xs0[:, :, [0, 2, 1]], xs0[:, :, [1, 0, 2]], xs0[:, :, [1, 2, 0]], xs0[:, :, [2, 0, 1]], xs0[:, :, [2, 1, 0]]), axis=0)
+    ys0 = np.concatenate((ys0, ys0, ys0, ys0, ys0, ys0), axis=0)
 
   return xs0, ys0, xs1, ys1
 
