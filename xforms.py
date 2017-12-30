@@ -19,7 +19,7 @@ def standardize(image):
     # Handle floating point dtype. In this case, take the absolute value and scale to [0, 255].
     assert image.dtype == np.float32 or image.dtype == np.float64
     image = np.absolute(image)
-    # Compute the max and mean. Divide by the smaller of the max and 3 times the mean.
+    # Compute the max and mean. Divide by the smaller of the max and 10 times the mean.
     den = image.max()
     avg = image.mean()
     den = min(den, 10 * avg)
@@ -106,9 +106,9 @@ def hsv_sv_avg(image):
 def hsv_sv_mask(image):
   """ Returns S and masked by V >= thresh. """
   assert len(image.shape) == 3 and image.shape[2] == 3
-  hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
-  res = hsv[:, :, 1]
-  res[hsv[:, :, 2] < 0x80] = 0
+  tmp = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+  res = tmp[:, :, 1]
+  res[tmp[:, :, 2] < 0x80] = 0
   return res
 
 def hsv_h(image):

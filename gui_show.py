@@ -22,6 +22,7 @@ import imageio
 import PIL.Image as _img
 import PIL.ImageTk as _imgtk
 import numpy as np
+import scipy.ndimage.measurements as _meas
 
 # The transforms are for experimental visualization.
 import xforms as _xforms
@@ -78,7 +79,7 @@ class Application(_tk.Frame):
     self._pipeline = None
 
     # The classifier func.
-    self._classifier = None
+    self._getVehicleRects = None
 
     # Load the camera un-distort function.
     self._undistort = _pipeline.getUndistortFunc(self._logger)
@@ -125,6 +126,10 @@ class Application(_tk.Frame):
     _tk.Checkbutton(master=frame, variable=self.mulFlipVar, text='Multiply Flip', command=self._mulFlipToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
     self.addFlipVar = _tk.IntVar(master=frame, value=0)
     _tk.Checkbutton(master=frame, variable=self.addFlipVar, text='Add Flip', command=self._addFlipToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
+    self.showHeatVar = _tk.IntVar(master=frame, value=0)
+    _tk.Checkbutton(master=frame, variable=self.showHeatVar, text='Show Heat', command=self._showHeatToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
+    self.showBoundsVar = _tk.IntVar(master=frame, value=0)
+    _tk.Checkbutton(master=frame, variable=self.showBoundsVar, text='Show Bounds', command=self._showBoundsToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
 
     frame = _tk.Frame(master=self, borderwidth=3)
     frame.pack(fill=_tk.X, side=_tk.TOP, padx=padx, pady=0)
@@ -331,6 +336,7 @@ class Application(_tk.Frame):
 
     # Reset everything, then start playing.
     self._pipeline = None
+    self._getVehicleRects = None
     self.jumpData(0)
     self.runVar.set(1)
     self._runToggle()
@@ -344,6 +350,7 @@ class Application(_tk.Frame):
       self._data = None
     # Since the pipeline carries state, reset it.
     self._pipeline = None
+    self._getVehicleRects = None
     self._data = data
     self.jumpData(0)
 
@@ -392,6 +399,7 @@ class Application(_tk.Frame):
       # Forget any old pipeline or pooler function and get the new perspective.
       self._pooler = None
       self._pipeline = None
+      self._getVehicleRects = None
       self._perspective = _pipeline.Perspective(self._dy, self._dx)
 
   def _setImage(self):
@@ -408,28 +416,16 @@ class Application(_tk.Frame):
       if self._pipeline is None:
         # Get the pipline function.
         self._pipeline = _pipeline.getPipelineFunc(self._logger, pixels.shape, self._perspective, self.sensitiveVar.get() != 0)
-    elif useModel:
-      if self._classifier is None:
-        import model as _model
-        self._classifier = _model.getModelFunc1(scale=4)
 
     # Do the transformations, and time it.
     t0 = time.time()
 
     if usePipeline:
+      # Use the lane detection pipeline.
       pixels = self._getPipelineImage(pixels)
     elif useModel:
-      if self.flipVar.get() != 0:
-        pixels = pixels[:, ::-1, :]
-      buf = self._classifier(pixels)
-      if self.mulFlipVar.get() != 0:
-        buf1 = self._classifier(pixels[:, ::-1, :])
-        buf = np.multiply(buf, buf1[:, ::-1])
-      elif self.addFlipVar.get() != 0:
-        buf1 = self._classifier(pixels[:, ::-1, :])
-        buf = np.add(buf, buf1[:, ::-1])
-      buf = _xforms.standardize(buf)
-      pixels = cv2.addWeighted(pixels, 0.5, buf, 0.5, 0)
+      # Use the vehicle detection model.
+      pixels = self._getModelImage(pixels)
     else:
       # Use transform controls instead of pipeline.
 
@@ -620,6 +616,55 @@ class Application(_tk.Frame):
 
     return pixels
 
+  def _getModelImage(self, pixels):
+    # scales = (1, 1.5, 2, 3, 4)
+    scales = (1, 2)
+    flip = True
+    if self._getVehicleRects is None:
+      import model as _model
+      self._getVehicleRects = _model.getModelRectsMultiFunc(scales=scales, flip=flip)
+
+    # Each scale is invoked 4 times.
+    heatMax = 4 * len(scales)
+    if flip:
+      heatMax *= 2
+
+    if self.flipVar.get() != 0:
+      pixels = pixels[:, ::-1, :]
+
+    rects = self._getVehicleRects(pixels)
+    showHeat = self.showHeatVar.get() != 0
+    showBounds = self.showBoundsVar.get() != 0
+    if showHeat or showBounds:
+      heat = np.zeros(shape=pixels.shape[:2], dtype=np.float32)
+      for pt0, pt1 in rects:
+        heat[pt0[1]:pt1[1], pt0[0]:pt1[0]] += 1
+
+      m = heat.max()
+      # thresh = max(m / 3, 4)
+      thresh = 2
+      print(m, thresh)
+      heat[heat < thresh] = 0
+      heat = np.minimum(heat / heatMax, 1.0)
+      if showBounds:
+        pixels = np.copy(pixels)
+        labels, count = _meas.label(heat)
+        print(labels.shape, labels.dtype, count)
+        for i in range(1, count + 1):
+          ys, xs = (labels == i).nonzero()
+          pt0 = (min(xs), min(ys))
+          pt1 = (max(xs) + 1, max(ys) + 1)
+          cv2.rectangle(pixels, pt0, pt1, (0, 0, 0xFF), 3)
+      else:
+        pixels = np.uint8(heat * 255)
+        pixels = _xforms.standardize(pixels)
+    else:
+      pixels = np.copy(pixels)
+      for pt0, pt1 in rects:
+        cv2.rectangle(pixels, pt0, pt1, (0xFF, 0, 0), 3)
+
+    return pixels
+
   def _undistortToggle(self):
     self._setImage()
 
@@ -668,13 +713,19 @@ class Application(_tk.Frame):
     self._drawGuidesToggle()
 
   def _flipToggle(self):
-    self._drawGuidesToggle()
+    self._setImage()
 
   def _mulFlipToggle(self):
-    self._drawGuidesToggle()
+    self._setImage()
 
   def _addFlipToggle(self):
-    self._drawGuidesToggle()
+    self._setImage()
+
+  def _showHeatToggle(self):
+    self._setImage()
+
+  def _showBoundsToggle(self):
+    self._setImage()
 
   def nextData(self):
     self._data.next()

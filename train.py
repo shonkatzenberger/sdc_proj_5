@@ -132,9 +132,10 @@ def _run():
     print("Validation accuracy and loss before: {:.03f}, {:.03f}".format(acc / num, loss / num))
 
     batchSize = 64
-    _trainMulti(sess, 10, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.0005, batchSize=batchSize)
-    _trainMulti(sess, 5, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.0002, batchSize=batchSize)
-    _trainMulti(sess, 5, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.0001, batchSize=batchSize)
+    _trainMulti(sess, 5, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.00100, batchSize=batchSize)
+    _trainMulti(sess, 5, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.00030, batchSize=batchSize)
+    # _trainMulti(sess, 5, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.00010, batchSize=batchSize)
+    # _trainMulti(sess, 5, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.00005, batchSize=batchSize)
 
     _model.saveModelWeights(sess, weights)
 
