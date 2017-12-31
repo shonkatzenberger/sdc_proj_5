@@ -458,3 +458,39 @@ class HeatMap(object):
       rects.append(rc)
 
     return rects
+
+  def render(self, pixels=None):
+    """ Render the current heat map into the given buffer and return it.
+    """
+
+    if pixels is None:
+      pixels = np.zeros(shape=self._shape + (3,), dtype=np.uint8)
+    else:
+      # Clear the green and blue channels.
+      assert pixels.shape == self._shape + (3,)
+      pixels[:, :, 1:] = 0
+
+    buf = self._heat.astype(np.float32)
+
+    # First map _threshLo to 1 and _threshHi to 2.
+    diff = self._threshHi - self._threshLo
+    np.add(buf, diff - self._threshLo, out=buf)
+    np.divide(buf, diff, out=buf)
+
+    # Set anything below 1 to zero and anything above 2 to 2.
+    buf[buf < 1] = 0
+    np.minimum(buf, 2, out=buf)
+    # Now multiply by 0x7F and cast to uint8 to get valid pixel values.
+    np.multiply(buf, 0x7F, out=buf)
+    buf = buf.astype(np.uint8)
+
+    # Tile to adjust for spatial quantization.
+    q = self._spatialQuant
+    if q > 1:
+      buf = buf[:, None, :, None]
+      buf = np.tile(buf, (1, q, 1, q))
+      buf = np.reshape(buf, newshape=self._shape)
+
+    # Use the red channel for heat.
+    pixels[:, :, 0] = buf
+    return pixels

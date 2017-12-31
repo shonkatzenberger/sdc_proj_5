@@ -68,6 +68,7 @@ class Application(_tk.Frame):
     # The vehicle detection func and heat map object.
     self._getVehicleRects = None
     self._heatMap = None
+    self._idPrev = -1
 
     # Load the camera un-distort function.
     self._undistort = _pipeline.getUndistortFunc(self._logger)
@@ -323,7 +324,8 @@ class Application(_tk.Frame):
       import model as _model
       scales = (0.5, 1, 1.5, 2)
       self._getVehicleRects = _model.getModelRectsMultiFunc(scales=scales, flip=True)
-      self._heatMap = None
+      self._heatMap = _model.HeatMap()
+      self._idPrev = -1
 
     # Do the transformations, and time it.
     t0 = time.time()
@@ -338,6 +340,12 @@ class Application(_tk.Frame):
       _, lineInfo = self._pipeline(pixels)
     if useModel:
       rects = self._getVehicleRects(pixels)
+      # Only update the heap map if the frame index has changed.
+      # Otherwise, flipping between view modes would change the heat map.
+      index = self._data.index
+      if self._idPrev != index:
+        self._heatMap.update(rects)
+        self._idPrev = index
 
     if usePipeline:
       pixels = self._drawLaneInfo(pixels, lineInfo)
@@ -459,34 +467,19 @@ class Application(_tk.Frame):
     return pixels
 
   def _drawVehiclInfo(self, pixels, rects):
-    showHeat = self.showHeatVar.get() != 0
-    showBounds = self.showBoundsVar.get() != 0
-    if showHeat or showBounds:
-      if self._heatMap is None:
-        import model as _model
-        self._heatMap = _model.HeatMap()
-
-      self._heatMap.update(rects)
-
-      if showBounds:
-        bounds = self._heatMap.getBounds()
-        for pt0, pt1 in bounds:
-          cv2.rectangle(pixels, pt0, pt1, (0, 0, 0xFF), 3)
-      else:
-        # REVIEW shonk: Implement this?
-        # m = heat.max()
-        # # thresh = max(m / 3, 4)
-        # thresh = 2
-        # print(m, thresh)
-        # heat[heat < thresh] = 0
-        # heat = np.minimum(heat / heatMax, 1.0)
-
-        # pixels = np.uint8(heat * 255)
-        # pixels = _xforms.standardize(pixels)
-        pass
+    # This assumes the heat map has already been updated with the rects.
+    # The rects are passed here in case we want to draw them.
+    if self.showBoundsVar.get() != 0:
+      bounds = self._heatMap.getBounds()
+      for pt0, pt1 in bounds:
+        # Blue for bounds.
+        cv2.rectangle(pixels, pt0, pt1, (0, 0, 0xFF), 3)
+    elif self.showHeatVar.get() != 0:
+      pixels = self._heatMap.render(pixels)
     else:
       for pt0, pt1 in rects:
-        cv2.rectangle(pixels, pt0, pt1, (0xFF, 0, 0), 3)
+        # Red for raw rectangles.
+        cv2.rectangle(pixels, pt0, pt1, (0xFF, 0, 0), 1)
 
     return pixels
 
