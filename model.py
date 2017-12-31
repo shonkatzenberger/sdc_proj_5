@@ -322,7 +322,7 @@ def getModelRectsFunc(
           ))
     count = len(rects) - count
 
-    print("Scale {} rects: {}".format(scale, count))
+    # print("Scale {} rects: {}".format(scale, count))
     return rects
 
   return _do
@@ -365,7 +365,7 @@ class HeatMap(object):
     # with max heat below _threshHi.
     # REVIEW shonk: What should the thresholds be?
     self._threshLo = 10 * sum(self._weights)
-    self._threshHi = 24 * sum(self._weights)
+    self._threshHi = 20 * sum(self._weights)
 
     # Ignore bounding rectangles smaller than this in either dimension.
     self._dzMin = 48
@@ -399,7 +399,7 @@ class HeatMap(object):
     self._adjustHeat(rects, self._weights[0])
     self._rects.appendleft(rects)
     assert len(self._rects) <= len(self._weights)
-    # print("New Max: {}".format(self._heat.max()))
+    print("New Max: {}".format(self._heat.max()))
 
   def _convertRects(self, rects):
     """ Given initial rectangles, validate and scale them to our heat map. """
@@ -451,10 +451,10 @@ class HeatMap(object):
       tmp = self._heat[labels == i]
       hi = tmp.max()
       if hi < self._threshHi:
-        # print("Rejected for max: {}, {}".format(rc, hi))
+        print("Rejected for max: {}, {}".format(rc, hi))
         continue
 
-      # print("  Min/max for {} is {}/{}".format(rc, tmp.min(), hi))
+      print("  Min/max for {} is {}/{}".format(rc, tmp.min(), hi))
       rects.append(rc)
 
     return rects
