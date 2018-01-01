@@ -36,21 +36,22 @@ The template writeup is assuming use of HOG and SVM. I chose to use neither of t
 [image01]: ./images/boxes_15_quad.png
 [image02]: ./images/boxes_all.png
 [image03]: ./images/boxes_all_quad.png
-[image04]: ./images/raw_rects.png
-[image05]: ./images/heat.png
-[image06]: ./images/bounds.png
-[image07]: ./images/test_image_boxes.png
-[image08]: ./images/test_image_heat.png
-[image09]: ./images/gui_show.png
+[image04]: ./images/raw_rects_00.png
+[image05]: ./images/raw_rects_01.png
+[image06]: ./images/heat_00.png
+[image07]: ./images/heat_01.png
+[image08]: ./images/bounds_00.png
+[image09]: ./images/bounds_01.png
+[image10]: ./images/test_image_boxes.png
+[image11]: ./images/test_image_heat.png
+[image12]: ./images/gui_show.png
 
-[image1]: ./examples/car_not_car.png
-[image2]: ./examples/HOG_example.jpg
-[image3]: ./examples/sliding_windows.jpg
-[image4]: ./examples/sliding_window.jpg
-[image5]: ./examples/bboxes_and_heat.png
-[image6]: ./examples/labels_map.png
-[image7]: ./examples/output_bboxes.png
-[video1]: ./project_video.mp4
+[image20]: ./images/extra1630.png
+[image21]: ./images/extra1633.png
+[image22]: ./images/extra2065.png
+[image23]: ./images/extra3009.png
+[image24]: ./images/extra5061.png
+[image25]: ./images/extra5121.png
 
 ## Submission Details
 
@@ -59,11 +60,11 @@ The submission consists of the following files:
 * `consolidate_data.py`: The script to read the images in the `Data/vehicles` and `Data/non-vehicles` folders and save them
 as two `numpy` arrays in `Data/vehicles.npy` and `Data/non-vehicles.npy`. The `numpy` arrays have shape of the form
 `(N, 64, 64, 3)`, where `N` is the number of images. This script can be executed directly.
-* `train.py`: The script to model the vehicle detection (classification) model. This script can be executed directly.
+* `train.py`: The script to train the vehicle detection (classification) model. This script can be executed directly.
+* `model.npz`: The trained model weights (output of `train.py`).
 * `model.py`: The vehicle detection model code. This ***cannot*** be executed directly, but is imported by `train.py` and by
 the harness, `gui_show.py`.
-* `model.npz`: The trained model weights.
-* `gui_show.py`: The visualization and harness application. This is a modified version of the harness application I used in
+* `gui_show.py`: The visualization and harness application. This is a modified version of the harness application I wrote for
 the advanced lane finding project.
 * `pipeline.py`, `calibrate.py`, `cameraCalibration.p`: These are copied from the advanced lane finding project. There is
 one small change in `pipeline.py`, namely that applying `undistort` has been moved out of `pipeline.py`, since the undistorted
@@ -85,7 +86,8 @@ for multiple scales of the image, so clearly HOG would not get near 10 frames pe
 GPU, so decided to craft a solution using Tensorflow.
 
 Given enough training data, a neural network can easily "learn" gradient features directly from raw input data, so hand crafting
-gradient features in unnecessary. For this project, the provided training data was adequate to produce a good DNN classifier.
+gradient features (such as HOG) is unnecessary. For this project, the provided training data was sufficient to produce a good
+DNN classifier.
 
 Ideally, the windowing logic should also be kept on the GPU. The key insight is that a fully convolutional neural network
 (with no fully connected layers) can be applied to images of various sizes and automatically performs windowing. That is,
@@ -105,7 +107,7 @@ approximation.
 More precisely, the network consists of:
 * The input placeholder of shape `(H, W, 3)` and type `uint8`. The shapes of the other layers naturally depend on `H` and `W`.
 * Conversion to `float32` and the affine mapping from the half-open interval `[0, 256)` to `[-0.5, 0.5)`, that is,
-divide be `256` and subtract `0.5`.
+divide by `256` and subtract `0.5`.
 * Symmetric padding of `31` additional cells in each spatial dimension.
 * `3 x 3` convolution with `relu` activation, stride `2` and `24` channels.
 * `3 x 3` convolution with `relu` activation, stride `2` and `36` channels.
@@ -120,36 +122,76 @@ Note that this network is likely higher capacity than is needed, but it accompli
 For training, I applied sigmoid activation and cross entropy loss with the label being a `2 x 2` tensor of ones (for vehicles)
 or zeros (for non-vehicles).
 
-The code for constructing the classifier model is in the `buildModel` function in `model.py`.
+The code for constructing the classifier model is in the `buildModel` function in `model.py`. Here is the core model
+definition code:
+
+```
+  # The list of layers to return.
+  layers = []
+
+  # If 'src' isn't specified, create the input placeholder.
+  cur = src if src is not None else _tf.placeholder(dtype=_tf.uint8, shape=(batchSize,) + shape, name='input')
+  layers.append(cur)
+
+  # Convert to float, and normalize to be in the range [-0.5, 0.5).
+  cur = _tf.to_float(cur)
+  cur = cur / 256.0
+  cur = cur - 0.5
+  layers.append(cur)
+
+  # Now explictly pad by _spatialShrinkFactor - 1. This is better than padding with zeros
+  # in each convolution. Note also that we pad with real pixel values (using 'SYMMETRIC' mode).
+  assert _spatialShrinkFactor % 2 == 0
+  dz = _spatialShrinkFactor // 2
+  cur = _tf.pad(cur, paddings=((0, 0), (dz - 1, dz), (dz - 1, dz), (0, 0)), mode="SYMMETRIC")
+  layers.append(cur)
+
+  cur = _Conv('Conv1', cur, count=24, size=3, stride=2)
+  layers.append(cur)
+  cur = _Conv('Conv2', cur, count=36, size=3, stride=2)
+  layers.append(cur)
+  cur = _Conv('Conv3', cur, count=48, size=3, stride=2)
+  layers.append(cur)
+  cur = _Conv('Conv4', cur, count=64, size=3, stride=2 if sampleMode < 4 else 1)
+  layers.append(cur)
+  cur = _Conv('Conv5', cur, count=128, size=3, stride=2 if sampleMode < 2 else 1, dilation=1 if sampleMode < 4 else 2)
+  layers.append(cur)
+  # These last couple layers mimic fully connected layers by using 1x1 convolution.
+  cur = _Conv('Conv6', cur, count=100, size=1, stride=1)
+  layers.append(cur)
+  # Don't apply relu at the end. Sigmoid is the final activation function and is applied by the caller.
+  cur = _Conv('Conv7', cur, count=1, size=1, stride=1, relu=False)
+  layers.append(cur)
+```
 
 ### Windowing Details
 
-For prediction, I apply the neural network on images of various scales and sizes (detailed below). For this discussion, suppose
+For prediction, I apply the CNN on images of various scales and sizes (detailed below). For this discussion, suppose
 the network is to be applied to a sub-image of size `256 x 1280`. Then the output will be `8 x 40`. An output cell with indices
-`(i, j)` is interpreted as the prediction for the input rectangle `((32 * i, 32 * j), (32 * (i + 1), 32 * (j + 1))`.
+`(i, j)` is interpreted as the prediction for the input rectangle `((32 * i, 32 * j), (32 * i + 32, 32 * j + 32)`.
 This provides a prediction every 32 pixels, which is too coarse; we'd like predictions at finer intervals, like every 16 or every
 8 pixels. Getting 16 pixels is quite easy: set the stride of the last `3 x 3` convolution to `1` rather than `2`. This increases
 the number of outputs to `15 x 79` with output cell `(i, j)` corresponding to the input rectangle
-`((16 * i, 16 * j), (16 * (i + 2), 16 * (j + 2))`.
+`((16 * i, 16 * j), (16 * i + 32, 16 * j + 32)`.
 
 To get to 8 pixel granularity, we can repeat the trick, but need to apply a twist: set the stride of the last *two*
 `3 x 3` convolutions to `1` rather then `2` and set the *dilation* of the last `3 x 3` convolution to `2` rather than `1`.
 This produces an output of size `29 x 157` with output cell `(i, j)` corresponding to the input rectangle
-`((8 * i, 8 * j), (8 * (i + 4), 8 * (j + 4))`.
+`((8 * i, 8 * j), (8 * i + 32, 8 * j + 32)`.
 
 This technique can be extended to provide even finer granularity, but I stopped at quadrupling. Note that the kernel sizes
 and values are all maintained by this technique. Only the stride and dilation are changed. See the `buildModel` function
-in `model.py` for the model details, and see the `_do` function nested in the `getModelRectsFunc` function for the
-prediction details. Both `buildModel` and `getModelRectsFunc` take a `sampleMode` parameter, which is restricted to
-the values 1, 2, and 4, with the corresponding granularities being 32, 16, and 8 pixels, respectively.
+in `model.py` (or the excerpt above) for the model details, and see the `_do` function nested in the `getModelRectsFunc`
+function for the prediction details. Both `buildModel` and `getModelRectsFunc` take a `sampleMode` parameter, which
+is restricted to the values 1, 2, and 4, with the corresponding granularities being 32, 16, and 8 pixels, respectively.
 
-Note that an increased sampleMode increases processing time, but much of the computation for the extra outputs is shared
-with the computation needed for the original outputs. That is, doubling the sampleMode does not double the amount of
+Note that an increased `sampleMode` increases processing time, but much of the computation for the extra outputs is shared
+with the computation needed for the original outputs. That is, doubling the `sampleMode` does not double the amount of
 computation. For example, with `scale=1`, the `sess.run` invocation in `_do` costs about 2 ms per frame, regardless
-of the value of `sampleMode`. However, the post processing tends to be closer to linear in the number of samples and
-also takes the bulk of the processing time. With `scale=1` active, the total time to process and render the result is
-about 35 ms with `sampleMode=1` and 50 ms with `sampleMode=4`. With all four chosen scales active (see below), the
-total processing time per frame is about 65 ms with `sampleMode=1` and 120 ms with `sampleMode=4`.
+of the value of `sampleMode`. However, the post processing tends to be closer to linear in `sampleMode` and also takes
+the bulk of the processing time. With only `scale=1` active, the total processing time per frame (on `test_video.mp4`)
+is about 35 ms with `sampleMode=1` and 40 ms with `sampleMode=4`. With all four chosen scales active (see below), the
+total processing time per frame (on `test_video.mp4`) is about 55 ms with `sampleMode=1` and 80 ms with `sampleMode=4`.
 
 In hindsight, I should have set `sampleMode=4` when training. Doing so would effectively augment the training data to include
 "shifted" versions of the training images. I'll likely experiment with this after submission.
@@ -183,27 +225,79 @@ Here are the boxes for all the scales that I used, with `sampleMode=4`:
 
 ![alt text][image03]
 
-In addition to using multiple scales, I also applied the classifier to the horizontally flipped image.
+In addition to using multiple scales, I also applied the classifier to the horizontally flipped image. See the
+`_do` function nested in the `getModelRectsMultiFunc` function in `model.py`:
+
+```
+  def _do(src):
+    assert src.shape == (720, 1280, 3)
+
+    # Apply the model functions, collecting up the rectangles in a list.
+    rects = []
+    for fn in fns:
+      rects.append(fn(src))
+    if flip:
+      # Apply the model functions to the flipped image.
+      src = src[:, ::-1, :]
+      for fn in fns:
+        rcs = fn(src)
+        # NOTE: we can't use a single np.subtract with out, since the source and destination
+        # buffer are the same, but flipped. numpy doesn't protect against this.
+        # np.subtract(src.shape[1], rcs[:, ::-1, 0], out=rcs[:, :, 0])
+        rcs[:, :, 0] = src.shape[1] - rcs[:, ::-1, 0]
+        rects.append(rcs)
+    res = np.concatenate(rects, axis=0)
+    return res
+```
 
 ### Color Space
 
 I chose to train and predict using the Lab color space. This gave better accuracy and generalization than using RGB.
-Note that HSV and HLS are not appropriate since the H component is a piece-wise, cyclic, non-linear value.
+Note that HSV and HLS are not appropriate since the H component is a piece-wise, cyclic value. That is, comparing two
+H values is not really meaningful unless the two values happen to be in the same sub-range of the H space.
 
 ### Training Details
 
 The training code is in `train.py`. It is very similar to code that I wrote for the behavioral cloning project.
 I used the provided training data, together with a small number of additional non-vehicle examples.
-I augmented this data with the horizontally flipped images (see `_loadAndSplitData`). I split the data with 90% used for
-training and the remaining 10% used for validation. I trained 5 epochs with learning rate 0.0010, 3 epochs with learning rate
-0.0003, and 3 epochs with learning rate 0.0001. I didn't bother with dropout or other regularization techniques.
+I augmented this data with the horizontally flipped images (see `_loadAndSplitData`):
 
-The trained weights are saved in the model.npz file.
+```
+  # Generate a random permutation of the data.
+  indices = rand.permutation(num)
+  sub = int(num * frac)
+  inds0 = indices[:sub]
+  inds1 = indices[sub:]
+  xs0, ys0, xs1, ys1 = xs[inds0], ys[inds0], xs[inds1], ys[inds1]
+
+  if useFlips:
+    xs0 = np.concatenate((xs0, xs0[:, :, ::-1, :]), axis=0)
+    ys0 = np.concatenate((ys0, ys0), axis=0)
+    # REVIEW shonk: Any reason to also augment the validation set?
+    xs1 = np.concatenate((xs1, xs1[:, :, ::-1, :]), axis=0)
+    ys1 = np.concatenate((ys1, ys1), axis=0)
+```
+
+I split the data with 90% used for training and the remaining 10% used for validation. I trained 5 epochs with
+learning rate 0.0010, 3 epochs with learning rate 0.0003, and 3 epochs with learning rate 0.0001. I didn't bother
+with dropout or other regularization techniques.
+
+The trained weights are saved in the `model.npz` file. Here's an expert:
+
+```
+    batchSize = 64
+    _trainMulti(sess, 5, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.00100, batchSize=batchSize)
+    _trainMulti(sess, 3, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.00030, batchSize=batchSize)
+    _trainMulti(sess, 3, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.00010, batchSize=batchSize)
+    # _trainMulti(sess, 5, featuresTrain, labelsTrain, featuresValid, labelsValid, rate=0.00005, batchSize=batchSize)
+
+    _model.saveModelWeights(sess, weights)
+```
 
 ### Prediction Details
 
 The `gui_show.py` harness invokes the `getModelRectsMultiFunc` function in `model.py`, which returns a function
-that accepts a `720 x 1280` RGB image and returns a (possible empty) list of (raw) rectangles. The returned function is
+that accepts a `720 x 1280` RGB image and returns a (possibly empty) list of (raw) rectangles. The returned function is
 stored in the `self._getVehicleRects` field of the `Application` object. The application also stores, in the
 `self._heatMap` field, an instance of the `HeatMap` class in `model.py`.
 
@@ -225,7 +319,7 @@ The code to process an image is in the `_setImage` method in `gui_show.py`:
 ```
 
 To process an image, the application applies distortion correction, then (optionally) invokes the lane finding code,
-`self._pipeline`, then (optionally) invokes `self._getVehicleRects`, which returns a list of raw rectangles.
+`self._pipeline`, then (optionally) invokes `self._getVehicleRects`, which returns a numpy array of raw rectangles.
 The rectangles are then sent to the heat map object:
 ```
         self._heatMap.update(rects)
@@ -243,30 +337,107 @@ already at the maximum, the oldest frame is dropped. All other frames are shifte
 is added to the queue. The heat map maintains the current total heat for all the "pixels" in the map, with each
 frame rectangle contributing the corresponding frame weight worth of heat for the pixels contained in the rectangle.
 Note that since the weights are not necessarily all the same, the amount of heat for each rectangle is updated
-whenever a new frame is added (via an invocation of the `update` method).
+whenever a new frame is added (via an invocation of the `update` method). Here's the code for the `update` method:
+
+```
+  def update(self, rects):
+    """ Process the rectangles (possibly empty) for a new frame. """
+    assert len(self._rects) <= len(self._weights)
+    # rects should be an array of shape (N, 2, 2), where each 'row' is of the form ((xMin, yMin), (xLim, yLim)).
+    assert isinstance(rects, np.ndarray) and rects.dtype == np.int32
+    assert len(rects.shape) == 3 and rects.shape[1] == 2 and rects.shape[2] == 2
+
+    # Convert to our heat map coordinates.
+    rects = self._convertRects(rects)
+
+    if len(self._rects) >= len(self._weights):
+      # The queue is full, so toss the oldest one.
+      rcs = self._rects.pop()
+      self._adjustHeat(rcs, -self._weights[-1])
+
+    # Adjust the heat contribution for old frames.
+    for i, rcs in enumerate(self._rects):
+      value = -self._deltas[i]
+      if value != 0:
+        self._adjustHeat(rcs, value)
+
+    assert self._heat.min() >= 0
+
+    # Add in the new rectangles.
+    self._adjustHeat(rects, self._weights[0])
+    self._rects.appendleft(rects)
+    assert len(self._rects) <= len(self._weights)
+    # print("New Max: {}".format(self._heat.max()))
+```
 
 Invoking the `getBounds` method of the `HeatMap` object returns a (possible empty) list of bounding rectangles.
 The bounding rectangles are generated by ignoring any heat values below a "low threshold" which is 10 times the
 sum of the frame weights, then invoking the `label` function of `scipy.ndimage.measurements`, and then
-finding the maximum and minimum extents of each "blob". I drop any rectangle that is less than 48 pixels in either
+finding the maximum and minimum extents of each "blob". I drop any rectangle that is less than 32 pixels in either
 direction, as well as any blob whose maximum is less than a "high threshold", namely 20 times the sum of the
 frame weights. Ideally, the constants 10 and 20 would be settable as they certainly depend on the number of scales
-that are used to generate raw rectangles.
+that are used to generate raw rectangles. Here's the `getBounds` code:
+
+```
+  def getBounds(self):
+    """ Get current bounding rectangles. """
+
+    # Ignore locations less than _threshLo.
+    mask = self._heat >= self._threshLo
+
+    # Find and label the blobs.
+    labels, count = _meas.label(mask)
+
+    q = self._spatialQuant
+    dzMin = self._dzMin
+
+    rects = []
+    for i in range(1, count + 1):
+      ys, xs = (labels == i).nonzero()
+      rc = ((q * min(xs), q * min(ys)), (q * (max(xs) + 1), q * (max(ys) + 1)))
+      if rc[1][0] - rc[0][0] < dzMin or rc[1][1] - rc[0][1] < dzMin:
+        # print("Rejected for size: {}".format(rc))
+        continue
+
+      # Ignore blobs whose max is too small.
+      tmp = self._heat[labels == i]
+      hi = tmp.max()
+      if hi < self._threshHi:
+        # print("Rejected for max: {}, {}".format(rc, hi))
+        continue
+
+      # print("  Min/max for {} is {}/{}".format(rc, tmp.min(), hi))
+      rects.append(rc)
+
+    return rects
+```
 
 Note that using multiple scales, smoothing over multiple frames, and using heat thresholds, reduces the chance
 of false positives.
 
-Here's a rendering of the raw rects on the first frame of `test_video.py`:
+Here are renderings of the raw rectangles on the first two frames of `test_video.py`:
 
 ![alt text][image04]
 
-Here's the corresponding heat map rendering:
-
 ![alt text][image05]
 
-Her's the resulting bounding boxes:
+
+Here are the corresponding heat map renderings:
 
 ![alt text][image06]
+
+![alt text][image07]
+
+Note that the second heat map image is "fuller" since it is an accumulation of the raw rectangles of both frames.
+
+Here are the resulting bounding boxes:
+
+![alt text][image08]
+
+![alt text][image09]
+
+Note that the first frame shows only one bounding box, since the second blob does not meet the "high threshold",
+while the accumulated heat map (over the first two frames) *does* meet the threshold.
 
 ---
 
@@ -297,9 +468,9 @@ See above for a description of the scales and rectangles that are "searched" usi
 
 Here's the first example image with resulting raw rectangles, and the associated heat map:
 
-![alt text][image07]
+![alt text][image10]
 
-![alt text][image08]
+![alt text][image11]
 
 ---
 ### Video Implementation
@@ -307,11 +478,11 @@ Here's the first example image with resulting raw rectangles, and the associated
 Here's a [link to the vehicle detection video](./videos/vehicle.mp4), and here's the
 [combined lane finding and vehicle detection video](./videos/combined.mp4). These are in the `videos` folder.
 
-The videos are recorded at 60 frames per second. Generation of the videos took roughly 100 ms and 200 ms per frame,
-respectively (10 fps and 5 fps, respectively). To easily view individual frames, I suggest using `python ./gui_show.py`,
-and either checking the `Run` checkbox, or use the scroll bar:
+The videos are recorded at 60 frames per second. Generation of the videos took roughly 60 - 80 ms and 120 - 140 ms per frame,
+respectively (12 - 16 fps and 7 - 8 fps, respectively). To easily view individual frames, I suggest using `python ./gui_show.py`,
+and either check the `Run` checkbox, or use the scroll bar:
 
-![alt text][image09]
+![alt text][image12]
 
 As explained above, the `HeatMap` class implements combining of overlapping raw rectangles, combining information across
 multiple frames, as well as thresholding. All of these help avoid false positives.
@@ -319,6 +490,34 @@ multiple frames, as well as thresholding. All of these help avoid false positive
 ---
 ### Discussion
 
-#### 1. Briefly discuss any problems / issues you faced in your implementation of this project.  Where will your pipeline likely fail?  What could you do to make it more robust?
+#### Briefly discuss any problems / issues you faced in your implementation of this project.  Where will your pipeline likely fail?  What could you do to make it more robust?
 
-Here I'll talk about the approach I took, what techniques I used, what worked and why, where the pipeline might fail and how I might improve it if I were going to pursue this project further.  
+Once I settled on using a convolutional neural network, one issue was how to achieve fine granularity (overlapping prediction rectangles).
+Initially, I invoked the CNN on multiple offset sub-regions, but realized that this was repeating a lot of computation. The key insight was
+that changing the stride and dilation of the last couple `3 x 3` convolutions was the right thing to do.
+
+Another issue was the quality of the classifier. I had to add some negative examples to fix a couple issues. For example,
+the bush on the left of the first frame of `project_video.mp4` and a section of barrier further into the video
+were both troublesome false positives. There is also a section of video where the classifier struggles to recognize
+the white car (starting around frame 600). I believe this is because the non-vehicle/Extras folder includes a lot of
+images of the grassy slope, as well as images containing part of the white car, such as these:
+
+![alt text][image20] ![alt text][image21] ![alt text][image22] ![alt text][image23] ![alt text][image24] ![alt text][image25]
+
+These kinds of issues can easily be improved with additional training data.
+
+Another thing that would likely have helped improve the classifier is to set sampleMode to 2 or 4 while training, as noted in
+the discussion above.
+
+Like many of the projects in this case, one can spend endless time tweaking thresholds and parameters, such as the image
+scales to use, the sub-region of the image for each scale, the heat map thresholds, the raw classifier threshold, the
+minimum bounding rectangle size, the number of frames to use in the heat map, the heat map frame weights, etc.
+The choices I made were driven by the particular `project_video.mp4` and would likely need to be further
+refined / tweaked for other scenarios. For example, with two-way traffic or cross traffic, 10 frames for the heat
+map may be too many, since the relative velocity of the other vehicles may be too large to expect 10 frames of
+continuity.
+
+The most obvious way to improve all of this is to leverage some of the recent advances in object detection,
+such as [YOLO](https://pjreddie.com/darknet/yolo/), [SSD](https://arxiv.org/abs/1512.02325), and
+[Focal Loss](https://arxiv.org/abs/1708.02002). I personally need to spend more time investigating what's out there.
+Perhaps this course could include some resources summarizing techniques like these.

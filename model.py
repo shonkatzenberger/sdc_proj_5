@@ -24,32 +24,38 @@ _spatialShrinkFactor = 32
 # parameter is the dictionary of previously trained weights to use.
 #
 # The 'sampleMode' parameter controls additional sampling, useful for prediction (not used when training).
-# When sampleMode=2, the last striding convolution is modified to use stride 1.
-# This effectively adds additional outputs half-way (spatially) between the normal outputs.
+# When sampleMode=2, the last striding convolution is modified to use stride 1. This effectively adds
+# additional outputs half-way (spatially) between the normal outputs.
 # When sampleMode=4, the last two striding convolutions are modified to use stride 1 and the last
 # striding convolution is modified to use dilation of 2. This effectively adds additional outputs quarter-ways
 # (spatially) between the normal outputs.
 #
-# This returns a list of layers and the weights dictionary.
+# This returns a list of layers and the weights dictionary. When training, the weight dictionary values
+# are tensorflow variables.
 def buildModel(rand, src=None, batchSize=1, shape=(64, 64, 3), weights=None, sampleMode=1):
+  # The input shape should have three dimensions, with each dimension divisible by _spatialShrinkFactor.
   assert len(shape) == 3
   assert shape[0] % _spatialShrinkFactor == 0, "Bad size: {}".format(shape)
   assert shape[1] % _spatialShrinkFactor == 0, "Bad size: {}".format(shape)
+
+  # This currently handles only sampleMode values of 1, 2, and 4, but could easily be extended
+  # to handle 8, 16, and 32 as well.
   assert sampleMode in (1, 2, 4)
 
   if weights is None:
-    # Initialize weights as an empty ordered dictionary.
+    # Building the graph for training. Initialize weights as an empty ordered dictionary.
     weights = collections.OrderedDict()
     frozen = False
   else:
+    # Building the graph for prediction. We shouldn't add anything to the dictionary.
     frozen = True
 
-  # Mean and standard deviation for weight initialization.
+  # Mean and standard deviation for weight initialization (when training).
   mu = 0
   sigma = 0.1
 
   def _Conv(name, inp, count, size=3, stride=1, dilation=1, relu=True):
-    """ Apply a convolution, with the given filter count and size. Uses padding. """
+    """ Apply a convolution, with the given filter count, size, stride, and dilation. Does not pad. """
 
     # Fetch or create the bias weights.
     nameBias = name + '.bias'
@@ -79,7 +85,7 @@ def buildModel(rand, src=None, batchSize=1, shape=(64, 64, 3), weights=None, sam
     elif isinstance(kern, np.ndarray):
       kern = _tf.constant(kern, name=nameKern)
 
-    # Note that we use 'VALID' padding mode. We do explicit padding at the pixel level
+    # Note that we use 'VALID' padding mode. We do explicit padding at the pixel level (below)
     # so we're not repeatedly padding with zeros on each convolution.
     res = _tf.nn.convolution(
       input=inp, filter=kern,
@@ -145,7 +151,7 @@ def getModelRectsMultiFunc(scales=(0.5, 1, 1.5, 2, 3, 4), flip=True):
   If flip is True, the function applies the model to both the image and the image
   flipped horizontally.
 
-  The returned function accepts an image and returns a list of rectangles.
+  The returned function accepts an image and returns a list of 'raw' rectangles.
   """
   assert isinstance(scales, tuple) and len(scales) > 0
 
@@ -158,9 +164,9 @@ def getModelRectsMultiFunc(scales=(0.5, 1, 1.5, 2, 3, 4), flip=True):
   # Collect up the individual functions for the indicated scales.
   fns = []
   for scale in scales:
-    # The parameters for getModelRectsFunc are hand tuned to capture be valid for the CNN and to cover the interesting
-    # portion of the image. Note that we've hard-coded the image size (720, 1280) throughout. This is less than ideal
-    # but making this more general would also make it much trickier to implement and understand.
+    # The parameters for getModelRectsFunc are hand tuned to be valid for the CNN and to cover the interesting
+    # portion of the image. Note that we've hard-coded the image size (720, 1280) throughout. This is less
+    # than ideal but making this more general would also make it trickier to implement and understand.
     #
     # Note that the final code (in gui_show.py) uses scales (0.5, 1, 1.5, 2), but not 3 and 4.
     if scale == 4:
@@ -198,18 +204,23 @@ def getModelRectsMultiFunc(scales=(0.5, 1, 1.5, 2, 3, 4), flip=True):
 
   def _do(src):
     assert src.shape == (720, 1280, 3)
+
+    # Apply the model functions, collecting up the rectangles in a list.
     rects = []
     for fn in fns:
-      fn(src, rects)
+      rects.append(fn(src))
     if flip:
       # Apply the model functions to the flipped image.
-      rects2 = []
       src = src[:, ::-1, :]
       for fn in fns:
-        fn(src, rects2)
-      for pt0, pt1 in rects2:
-        rects.append(((src.shape[1] - pt1[0], pt0[1]), (src.shape[1] - pt0[0], pt1[1])))
-    return rects
+        rcs = fn(src)
+        # NOTE: we can't use a single np.subtract with out, since the source and destination
+        # buffer are the same, but flipped. numpy doesn't protect against this.
+        # np.subtract(src.shape[1], rcs[:, ::-1, 0], out=rcs[:, :, 0])
+        rcs[:, :, 0] = src.shape[1] - rcs[:, ::-1, 0]
+        rects.append(rcs)
+    res = np.concatenate(rects, axis=0)
+    return res
 
   # Return the function that accepts the image and returns the list of rectangles.
   return _do
@@ -218,10 +229,13 @@ def getModelRectsFunc(
     scale, weights, shapeInpFull,
     shapeSrc=(720, 1280), yLim=None, xOffset=0, sess=None, sampleMode=1
   ):
-  """ Create and return a function to apply the model at the given scale.
-  shapeInpFull is the shape of the portion of the image to use. This portion is assumed to be centered horizontally
+  """ Create and return a function to apply the model at the given scale. shapeInpFull is the
+  shape of the portion of the image to use. This portion is assumed to be centered horizontally
   (overridable by xOffset), and have its bottom edge at yLim.
   """
+
+  assert len(shapeInpFull) == 2
+  assert len(shapeSrc) == 2
 
   assert sampleMode in (1, 2, 4)
 
@@ -254,7 +268,7 @@ def getModelRectsFunc(
   print("Scale {} has active region: [{} to {}] by [{} to {}]".format(scale, yMin, yLim, xMin, xLim))
 
   # Build the model for the size we need.
-  layers, _ = buildModel(None, src=None, batchSize=1, shape=shapeInp + (3,), weights=weights, sampleMode=sampleMode)
+  layers, _ = buildModel(rand=None, src=None, batchSize=1, shape=shapeInp + (3,), weights=weights, sampleMode=sampleMode)
   print("Layer information for scale {}:".format(scale))
   for lay in layers:
     print("  {}: {}".format(lay.name, lay.get_shape()))
@@ -264,7 +278,7 @@ def getModelRectsFunc(
   g_out = layers[-1]
 
   # Get the actual shrink factor (depending on sampleMode).
-  assert _spatialShrinkFactor % 4 == 0
+  assert _spatialShrinkFactor % sampleMode == 0
   shrinkFactor = _spatialShrinkFactor // sampleMode
 
   # Validate the model output shape.
@@ -279,16 +293,19 @@ def getModelRectsFunc(
   assert scaleToSrc == shrinkFactor * scale
   # print("Scale to src: ", scaleToSrc)
 
+  # Apply sigmoid and apply a threshold. Ideally the threshold would be client settable, but
+  # for simplicity, I just hard code it here. g_outRes is a 2-d boolean tensor indicating
+  # positive detections.
   # REVIEW shonk: What threshold should we use?
-  g_outRes = _tf.cast(_tf.greater(_tf.sigmoid(g_out), 0.70), _tf.float32)
+  g_outRes = _tf.greater(_tf.sigmoid(g_out), 0.70)
   g_outRes = _tf.reshape(g_outRes, shape=shapeOut)
 
   if sess is None:
     sess = _tf.Session()
 
-  # This is the function that we'll return. It accepts an input image and optional
-  # list of rectangles to append to.
-  def _do(src, rects=None):
+  # This is the function that we'll return. It accepts an input image and returns
+  # a numpy array of rectangles in ((xMin, yMin), (xLim, yLim)) order.
+  def _do(src):
     assert src.shape[:2] == shapeSrc
 
     # Get the input portion of src.
@@ -307,25 +324,28 @@ def getModelRectsFunc(
     res = sess.run(g_outRes, feed_dict={g_inp: inp[None, :, :, :]})
     assert isinstance(res, np.ndarray)
     assert res.shape == shapeOut
-
-    if rects is None:
-      rects = []
+    assert res.dtype == np.bool_
 
     # Add the rectangles.
     # Set showAll = True to see all the rectangles (used for crafting the coverage and density).
     showAll = False
-    count = len(rects)
-    for y in range(res.shape[0]):
-      for x in range(res.shape[1]):
-        if res[y, x] > 0 or showAll:
-          rects.append((
-            (xMin + scaleToSrc * x, yMin + scaleToSrc * y),
-            (xMin + scaleToSrc * (x + sampleMode), round(yMin + scaleToSrc * (y + sampleMode)))
-          ))
-    count = len(rects) - count
+    if showAll:
+      res[:, :] = True
 
-    # print("Scale {} rects: {}".format(scale, count))
-    return rects
+    # Get the non-zero cell indices.
+    iys, ixs = res.nonzero()
+    iys = iys.astype(np.int32)
+    ixs = ixs.astype(np.int32)
+
+    # Construct the rectangles.
+    ysMin = scaleToSrc * iys + yMin
+    xsMin = scaleToSrc * ixs + xMin
+    ysLim = ysMin + scaleToSrc * sampleMode
+    xsLim = xsMin + scaleToSrc * sampleMode
+    rcs = np.stack((xsMin, ysMin, xsLim, ysLim), axis=1)
+    rcs = np.reshape(rcs, newshape=(-1, 2, 2))
+
+    return rcs
 
   return _do
 
@@ -370,7 +390,7 @@ class HeatMap(object):
     self._threshHi = 20 * sum(self._weights)
 
     # Ignore bounding rectangles smaller than this in either dimension.
-    self._dzMin = 48
+    self._dzMin = 32
 
     # A queue of tuples of rectangles. These are the rectangles for the frames that are still active.
     self._rects = collections.deque()
@@ -380,6 +400,9 @@ class HeatMap(object):
   def update(self, rects):
     """ Process the rectangles (possibly empty) for a new frame. """
     assert len(self._rects) <= len(self._weights)
+    # rects should be an array of shape (N, 2, 2), where each 'row' is of the form ((xMin, yMin), (xLim, yLim)).
+    assert isinstance(rects, np.ndarray) and rects.dtype == np.int32
+    assert len(rects.shape) == 3 and rects.shape[1] == 2 and rects.shape[2] == 2
 
     # Convert to our heat map coordinates.
     rects = self._convertRects(rects)
@@ -401,33 +424,29 @@ class HeatMap(object):
     self._adjustHeat(rects, self._weights[0])
     self._rects.appendleft(rects)
     assert len(self._rects) <= len(self._weights)
-    # print("New Max: {}".format(self._heat.max()))
+    print("New Max: {}".format(self._heat.max()))
 
   def _convertRects(self, rects):
-    """ Given initial rectangles, validate and scale them to our heat map. """
-    dst = []
+    """ Given initial rectangles, scale them to our heat tensor. """
     q = self._spatialQuant
-    for rc in rects:
-      assert isinstance(rc, tuple) and len(rc) == 2
-      pt0, pt1 = rc
-      # Note that shape is in (y, x) order, while points are in (x, y) order, since cv2.rectangle
-      # wants (x, y) order.
-      assert isinstance(pt0, tuple) and len(pt0) == 2
-      assert isinstance(pt1, tuple) and len(pt1) == 2
-      assert 0 <= pt0[0] < pt1[0] <= self._shape[1], "Bad values: {}, {}, {}".format(pt0, pt1, self._shape)
-      assert 0 <= pt0[1] < pt1[1] <= self._shape[0], "Bad values: {}, {}, {}".format(pt0, pt1, self._shape)
-      assert all(z % q == 0 for z in pt0)
-      assert all(z % q == 0 for z in pt1)
-      dst.append(((pt0[0] // q, pt0[1] // q), (pt1[0] // q, pt1[1] // q)))
+    # assert np.all(rects % q == 0)
+    # assert np.all(rects >= 0)
+    # assert np.all(rects[:, :, 0] <= self._shape[1])
+    # assert np.all(rects[:, :, 1] <= self._shape[0])
+    # assert np.all(rects[:, 0, :] < rects[:, 1, :])
 
-    return tuple(dst)
+    res = np.floor_divide(rects, q)
+    return res
 
   def _adjustHeat(self, rects, value):
     """ Adjust heat by the given value for the given rectangles. """
-    assert isinstance(rects, tuple)
+    assert isinstance(rects, np.ndarray) and rects.dtype == np.int32
+    assert len(rects.shape) == 3 and rects.shape[1] == 2 and rects.shape[2] == 2
 
-    for pt0, pt1 in rects:
-      self._heat[pt0[1]:pt1[1], pt0[0]:pt1[0]] += value
+    # REVIEW shonk: Is there a way to do this in pure numpy land, without the
+    # python for-loop?
+    for rc in rects:
+      self._heat[rc[0, 1]:rc[1, 1], rc[0, 0]:rc[1, 0]] += value
 
   def getBounds(self):
     """ Get current bounding rectangles. """
@@ -446,14 +465,14 @@ class HeatMap(object):
       ys, xs = (labels == i).nonzero()
       rc = ((q * min(xs), q * min(ys)), (q * (max(xs) + 1), q * (max(ys) + 1)))
       if rc[1][0] - rc[0][0] < dzMin or rc[1][1] - rc[0][1] < dzMin:
-        # print("Rejected for size: {}".format(rc))
+        print("Rejected for size: {}".format(rc))
         continue
 
       # Ignore blobs whose max is too small.
       tmp = self._heat[labels == i]
       hi = tmp.max()
       if hi < self._threshHi:
-        # print("Rejected for max: {}, {}".format(rc, hi))
+        print("Rejected for max: {}, {}".format(rc, hi))
         continue
 
       # print("  Min/max for {} is {}/{}".format(rc, tmp.min(), hi))

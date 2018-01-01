@@ -350,7 +350,7 @@ class Application(_tk.Frame):
     if usePipeline:
       pixels = self._drawLaneInfo(pixels, lineInfo)
     if useModel:
-      pixels = self._drawVehiclInfo(pixels, rects)
+      pixels = self._drawVehicleInfo(pixels, rects)
 
     # Get the total time for the transformations.
     dt = time.time() - t0
@@ -466,7 +466,7 @@ class Application(_tk.Frame):
 
     return pixels
 
-  def _drawVehiclInfo(self, pixels, rects):
+  def _drawVehicleInfo(self, pixels, rects):
     # This assumes the heat map has already been updated with the rects.
     # The rects are passed here in case we want to draw them.
     if self.showBoundsVar.get() != 0:
@@ -477,9 +477,9 @@ class Application(_tk.Frame):
     elif self.showHeatVar.get() != 0:
       pixels = self._heatMap.render(pixels)
     else:
-      for pt0, pt1 in rects:
+      for rc in rects:
         # Red for raw rectangles.
-        cv2.rectangle(pixels, pt0, pt1, (0xFF, 0, 0), 1)
+        cv2.rectangle(pixels, (rc[0, 0], rc[0, 1]), (rc[1, 0], rc[1, 1]), (0xFF, 0, 0), 1)
 
     return pixels
 
