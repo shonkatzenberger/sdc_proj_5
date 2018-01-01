@@ -9,7 +9,7 @@ import scipy.ndimage.measurements as _meas
 
 # NOTE: For clarity I use names starting with g_ for tensorflow graph nodes.
 
-# This is the factor by which the CNN shrinks spatial dimensions (when double and quad are false).
+# This is the factor by which the CNN shrinks spatial dimensions (when sampleMode is 1).
 _spatialShrinkFactor = 32
 
 # Builds the CNN model, for either training or prediction. The model has five convolutions that
@@ -19,22 +19,23 @@ _spatialShrinkFactor = 32
 # used for training. Thus, the convolutions take care of "windowing" for us, keeping the bulk of
 # the number crunching in the GPU, where it belongs.
 #
-# The 'double' and 'quad' parameters control additional sampling, useful for prediction (not used when training).
-# When 'double' is True (but 'quad' is not), the last striding convolution is modified to use stride 1.
+# For training, the weights parameter should be None, in which case, a weights dictionary is allocated and a
+# variable is introduced and added to the dictionary for each weight tensor. For prediction, the weights
+# parameter is the dictionary of previously trained weights to use.
+#
+# The 'sampleMode' parameter controls additional sampling, useful for prediction (not used when training).
+# When sampleMode=2, the last striding convolution is modified to use stride 1.
 # This effectively adds additional outputs half-way (spatially) between the normal outputs.
-# When 'quad' is True, the last two striding convolutions are modified to use stride 1 and the last
+# When sampleMode=4, the last two striding convolutions are modified to use stride 1 and the last
 # striding convolution is modified to use dilation of 2. This effectively adds additional outputs quarter-ways
 # (spatially) between the normal outputs.
 #
-# The weights parameter can contain a dictionary of weights to use. If weights is None or a needed weight
-# isn't in the dictionary, a variable is introduced and added to the dictionary. When training, weights
-# is initially set to None, while for prediction, weights is a dictionary containing previously trained weights.
-#
 # This returns a list of layers and the weights dictionary.
-def buildModel(rand, src=None, batchSize=1, shape=(64, 64, 3), weights=None, double=False, quad=False):
+def buildModel(rand, src=None, batchSize=1, shape=(64, 64, 3), weights=None, sampleMode=1):
   assert len(shape) == 3
   assert shape[0] % _spatialShrinkFactor == 0, "Bad size: {}".format(shape)
   assert shape[1] % _spatialShrinkFactor == 0, "Bad size: {}".format(shape)
+  assert sampleMode in (1, 2, 4)
 
   if weights is None:
     # Initialize weights as an empty ordered dictionary.
@@ -115,9 +116,9 @@ def buildModel(rand, src=None, batchSize=1, shape=(64, 64, 3), weights=None, dou
   layers.append(cur)
   cur = _Conv('Conv3', cur, count=48, size=3, stride=2)
   layers.append(cur)
-  cur = _Conv('Conv4', cur, count=64, size=3, stride=1 if quad else 2)
+  cur = _Conv('Conv4', cur, count=64, size=3, stride=2 if sampleMode < 4 else 1)
   layers.append(cur)
-  cur = _Conv('Conv5', cur, count=128, size=3, stride=1 if double or quad else 2, dilation=2 if quad else 1)
+  cur = _Conv('Conv5', cur, count=128, size=3, stride=2 if sampleMode < 2 else 1, dilation=1 if sampleMode < 4 else 2)
   layers.append(cur)
   # These last couple layers mimic fully connected layers by using 1x1 convolution.
   cur = _Conv('Conv6', cur, count=100, size=1, stride=1)
@@ -126,7 +127,7 @@ def buildModel(rand, src=None, batchSize=1, shape=(64, 64, 3), weights=None, dou
   cur = _Conv('Conv7', cur, count=1, size=1, stride=1, relu=False)
   layers.append(cur)
 
-  # Return the layers list and the weights.
+  # Return the layers and the weights.
   return layers, weights
 
 def saveModelWeights(sess, weights):
@@ -166,32 +167,32 @@ def getModelRectsMultiFunc(scales=(0.5, 1, 1.5, 2, 3, 4), flip=True):
       # 128 pixel rectangles.
       fns.append(getModelRectsFunc(
         scale=scale, weights=weights, sess=sess,
-        shapeInpFull=(2 * 128, 1280), yLim=720 - 96, double=True, quad=True))
+        shapeInpFull=(2 * 128, 1280), yLim=720 - 96, sampleMode=4))
     elif scale == 3:
       # 96 pixel rectangles.
       fns.append(getModelRectsFunc(
         scale=scale, weights=weights, sess=sess,
-        shapeInpFull=(3 * 96, 1280 - 32), yLim=720 - 96, double=True, quad=True))
+        shapeInpFull=(3 * 96, 1280 - 32), yLim=720 - 96, sampleMode=4))
     elif scale == 2:
       # 64 pixel rectangles.
       fns.append(getModelRectsFunc(
         scale=scale, weights=weights, sess=sess,
-        shapeInpFull=(4 * 64, 1280), yLim=720 - 96, double=True, quad=True))
+        shapeInpFull=(4 * 64, 1280), yLim=720 - 96, sampleMode=4))
     elif scale == 1.5:
       # 48 pixel rectangles.
       fns.append(getModelRectsFunc(
         scale=scale, weights=weights, sess=sess,
-        shapeInpFull=(4 * 48, 1248), yLim=720 - 128 - 32, double=True, quad=True))
+        shapeInpFull=(4 * 48, 1248), yLim=720 - 128 - 32, sampleMode=4))
     elif scale == 1:
       # 32 pixel rectangles. This one doesn't scale the image.
       fns.append(getModelRectsFunc(
         scale=scale, weights=weights, sess=sess,
-        shapeInpFull=(5 * 32, 1280), yLim=720 - 128 - 48, double=True, quad=True))
+        shapeInpFull=(5 * 32, 1280), yLim=720 - 128 - 48, sampleMode=4))
     elif scale == 0.5:
       # 16 pixel rectangles. This one actually scales the image up (rather than down).
       fns.append(getModelRectsFunc(
         scale=scale, sess=sess, weights=weights,
-        shapeInpFull=(10 * 16, 800), yLim=720 - 128 - 48, double=True, quad=True))
+        shapeInpFull=(10 * 16, 800), yLim=720 - 128 - 48, sampleMode=4))
     else:
       assert False, "Unimplemented scale factor"
 
@@ -215,12 +216,14 @@ def getModelRectsMultiFunc(scales=(0.5, 1, 1.5, 2, 3, 4), flip=True):
 
 def getModelRectsFunc(
     scale, weights, shapeInpFull,
-    shapeSrc=(720, 1280), yLim=None, xOffset=0, sess=None, double=False, quad=False
+    shapeSrc=(720, 1280), yLim=None, xOffset=0, sess=None, sampleMode=1
   ):
   """ Create and return a function to apply the model at the given scale.
   shapeInpFull is the shape of the portion of the image to use. This portion is assumed to be centered horizontally
   (overridable by xOffset), and have its bottom edge at yLim.
   """
+
+  assert sampleMode in (1, 2, 4)
 
   # Scale should be half of a positive integer.
   assert scale > 0
@@ -251,7 +254,7 @@ def getModelRectsFunc(
   print("Scale {} has active region: [{} to {}] by [{} to {}]".format(scale, yMin, yLim, xMin, xLim))
 
   # Build the model for the size we need.
-  layers, _ = buildModel(None, src=None, batchSize=1, shape=shapeInp + (3,), weights=weights, double=double, quad=quad)
+  layers, _ = buildModel(None, src=None, batchSize=1, shape=shapeInp + (3,), weights=weights, sampleMode=sampleMode)
   print("Layer information for scale {}:".format(scale))
   for lay in layers:
     print("  {}: {}".format(lay.name, lay.get_shape()))
@@ -260,14 +263,13 @@ def getModelRectsFunc(
   g_inp = layers[0]
   g_out = layers[-1]
 
-  # Get the actual shrink factor (depending on quad and double).
+  # Get the actual shrink factor (depending on sampleMode).
   assert _spatialShrinkFactor % 4 == 0
-  multiplier = 4 if quad else 2 if double else 1
-  shrinkFactor = _spatialShrinkFactor // multiplier
+  shrinkFactor = _spatialShrinkFactor // sampleMode
 
   # Validate the model output shape.
   shapeOut = tuple(g_out.get_shape().as_list())
-  assert shapeOut == (1, shapeInp[0] // shrinkFactor - (multiplier - 1), shapeInp[1] // shrinkFactor - (multiplier - 1), 1)
+  assert shapeOut == (1, shapeInp[0] // shrinkFactor - (sampleMode - 1), shapeInp[1] // shrinkFactor - (sampleMode - 1), 1)
 
   # Drop the leading and trailing 1 from shapeOut.
   shapeOut = shapeOut[1:3]
@@ -318,7 +320,7 @@ def getModelRectsFunc(
         if res[y, x] > 0 or showAll:
           rects.append((
             (xMin + scaleToSrc * x, yMin + scaleToSrc * y),
-            (xMin + scaleToSrc * (x + multiplier), round(yMin + scaleToSrc * (y + multiplier)))
+            (xMin + scaleToSrc * (x + sampleMode), round(yMin + scaleToSrc * (y + sampleMode)))
           ))
     count = len(rects) - count
 
@@ -399,7 +401,7 @@ class HeatMap(object):
     self._adjustHeat(rects, self._weights[0])
     self._rects.appendleft(rects)
     assert len(self._rects) <= len(self._weights)
-    print("New Max: {}".format(self._heat.max()))
+    # print("New Max: {}".format(self._heat.max()))
 
   def _convertRects(self, rects):
     """ Given initial rectangles, validate and scale them to our heat map. """
@@ -451,10 +453,10 @@ class HeatMap(object):
       tmp = self._heat[labels == i]
       hi = tmp.max()
       if hi < self._threshHi:
-        print("Rejected for max: {}, {}".format(rc, hi))
+        # print("Rejected for max: {}, {}".format(rc, hi))
         continue
 
-      print("  Min/max for {} is {}/{}".format(rc, tmp.min(), hi))
+      # print("  Min/max for {} is {}/{}".format(rc, tmp.min(), hi))
       rects.append(rc)
 
     return rects

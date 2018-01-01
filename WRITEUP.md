@@ -36,6 +36,12 @@ The template writeup is assuming use of HOG and SVM. I chose to use neither of t
 [image01]: ./images/boxes_15_quad.png
 [image02]: ./images/boxes_all.png
 [image03]: ./images/boxes_all_quad.png
+[image04]: ./images/raw_rects.png
+[image05]: ./images/heat.png
+[image06]: ./images/bounds.png
+[image07]: ./images/test_image_boxes.png
+[image08]: ./images/test_image_heat.png
+[image09]: ./images/gui_show.png
 
 [image1]: ./examples/car_not_car.png
 [image2]: ./examples/HOG_example.jpg
@@ -56,6 +62,7 @@ as two `numpy` arrays in `Data/vehicles.npy` and `Data/non-vehicles.npy`. The `n
 * `train.py`: The script to model the vehicle detection (classification) model. This script can be executed directly.
 * `model.py`: The vehicle detection model code. This ***cannot*** be executed directly, but is imported by `train.py` and by
 the harness, `gui_show.py`.
+* `model.npz`: The trained model weights.
 * `gui_show.py`: The visualization and harness application. This is a modified version of the harness application I used in
 the advanced lane finding project.
 * `pipeline.py`, `calibrate.py`, `cameraCalibration.p`: These are copied from the advanced lane finding project. There is
@@ -97,7 +104,7 @@ approximation.
 
 More precisely, the network consists of:
 * The input placeholder of shape `(H, W, 3)` and type `uint8`. The shapes of the other layers naturally depend on `H` and `W`.
-* Conversion to `float32` and the affine mapping from the half-open interval `[0, 256)` to `[-0.5, 0.5)`, this is,
+* Conversion to `float32` and the affine mapping from the half-open interval `[0, 256)` to `[-0.5, 0.5)`, that is,
 divide be `256` and subtract `0.5`.
 * Symmetric padding of `31` additional cells in each spatial dimension.
 * `3 x 3` convolution with `relu` activation, stride `2` and `24` channels.
@@ -125,7 +132,7 @@ This provides a prediction every 32 pixels, which is too coarse; we'd like predi
 the number of outputs to `15 x 79` with output cell `(i, j)` corresponding to the input rectangle
 `((16 * i, 16 * j), (16 * (i + 2), 16 * (j + 2))`.
 
-To get to 8 pixel granularity, we can repeat the trick, but need to apply a twist: set the stride of the last two
+To get to 8 pixel granularity, we can repeat the trick, but need to apply a twist: set the stride of the last *two*
 `3 x 3` convolutions to `1` rather then `2` and set the *dilation* of the last `3 x 3` convolution to `2` rather than `1`.
 This produces an output of size `29 x 157` with output cell `(i, j)` corresponding to the input rectangle
 `((8 * i, 8 * j), (8 * (i + 4), 8 * (j + 4))`.
@@ -181,7 +188,7 @@ In addition to using multiple scales, I also applied the classifier to the horiz
 ### Color Space
 
 I chose to train and predict using the Lab color space. This gave better accuracy and generalization than using RGB.
-Note that HSV and HLS are not appropriate since the H component is a piecewise, cyclic, non-linear value.
+Note that HSV and HLS are not appropriate since the H component is a piece-wise, cyclic, non-linear value.
 
 ### Training Details
 
@@ -191,12 +198,14 @@ I augmented this data with the horizontally flipped images (see `_loadAndSplitDa
 training and the remaining 10% used for validation. I trained 5 epochs with learning rate 0.0010, 3 epochs with learning rate
 0.0003, and 3 epochs with learning rate 0.0001. I didn't bother with dropout or other regularization techniques.
 
+The trained weights are saved in the model.npz file.
+
 ### Prediction Details
 
-The `gui_show.py` harness invokes the `getModelRectMultiFunc` function in `model.py`, which returns a function
-that accepts a `720 x 1280` RGB image and returns a list of (raw) rectangles. This function is stored in the
-`self._getVehicleRects` field of the `Application` object. The application also stores, in the `self._heatMap` field,
-an instance of the `HeatMap` class in `model.py`.
+The `gui_show.py` harness invokes the `getModelRectsMultiFunc` function in `model.py`, which returns a function
+that accepts a `720 x 1280` RGB image and returns a (possible empty) list of (raw) rectangles. The returned function is
+stored in the `self._getVehicleRects` field of the `Application` object. The application also stores, in the
+`self._heatMap` field, an instance of the `HeatMap` class in `model.py`.
 
 The code to process an image is in the `_setImage` method in `gui_show.py`:
 ```
@@ -215,96 +224,101 @@ The code to process an image is in the `_setImage` method in `gui_show.py`:
         self._idPrev = index
 ```
 
-To process an image, the application applies distortion correction, then (optionally) invokes the lane finding code
-(`self._pipeline`), then (optionally) invokes `self._getVehicleRects`, which returns a list of raw rectangles.
+To process an image, the application applies distortion correction, then (optionally) invokes the lane finding code,
+`self._pipeline`, then (optionally) invokes `self._getVehicleRects`, which returns a list of raw rectangles.
 The rectangles are then sent to the heat map object:
 ```
         self._heatMap.update(rects)
 ```
 
-The heat map accumulates information over multiple frames and can provide either a rendering of the heat map or bounding boxes
-for detections.
+### HeatMap Details
 
+The `HeatMap` class is in the `model.py` file. It accumulates information over multiple frames and can provide
+either a rendering of the heat map or bounding boxes for detections.
+
+The heat map constructor accepts a tuple of frame weights, defaulting to `(10, 10, 8, 8, 6, 6, 4, 4, 2, 2)`.
+The length of this tuple determines the maximum number of active frames in the heat map. The heat map has a queue
+containing the rectangles for the active frames. When a new frame is added, if the number of active frames is
+already at the maximum, the oldest frame is dropped. All other frames are shifted in the queue and the new frame
+is added to the queue. The heat map maintains the current total heat for all the "pixels" in the map, with each
+frame rectangle contributing the corresponding frame weight worth of heat for the pixels contained in the rectangle.
+Note that since the weights are not necessarily all the same, the amount of heat for each rectangle is updated
+whenever a new frame is added (via an invocation of the `update` method).
+
+Invoking the `getBounds` method of the `HeatMap` object returns a (possible empty) list of bounding rectangles.
+The bounding rectangles are generated by ignoring any heat values below a "low threshold" which is 10 times the
+sum of the frame weights, then invoking the `label` function of `scipy.ndimage.measurements`, and then
+finding the maximum and minimum extents of each "blob". I drop any rectangle that is less than 48 pixels in either
+direction, as well as any blob whose maximum is less than a "high threshold", namely 20 times the sum of the
+frame weights. Ideally, the constants 10 and 20 would be settable as they certainly depend on the number of scales
+that are used to generate raw rectangles.
+
+Note that using multiple scales, smoothing over multiple frames, and using heat thresholds, reduces the chance
+of false positives.
+
+Here's a rendering of the raw rects on the first frame of `test_video.py`:
+
+![alt text][image04]
+
+Here's the corresponding heat map rendering:
+
+![alt text][image05]
+
+Her's the resulting bounding boxes:
+
+![alt text][image06]
+
+---
 
 ## [Rubric](https://review.udacity.com/#!/rubrics/513/view) Points
-### Here I will consider the rubric points individually and describe how I addressed each point in my implementation.  
 
 ---
 ### Writeup / README
 
-#### 1. Provide a Writeup / README that includes all the rubric points and how you addressed each one.  You can submit your writeup as markdown or pdf.  [Here](https://github.com/udacity/CarND-Vehicle-Detection/blob/master/writeup_template.md) is a template writeup for this project you can use as a guide and a starting point.  
+This file is it!
 
-You're reading it!
-
+---
 ### Histogram of Oriented Gradients (HOG)
 
-#### 1. Explain how (and identify where in your code) you extracted HOG features from the training images.
+As explained above, I did not use HOG directly. A CNN is capable of learning gradient/derivative-like features on its own from
+a large enough training dataset. The HOG implementation suggested by the lectures is too slow to be useful for real time
+prediction. Using HOG is essentially hand crafting convolutional kernels, which, with recent advances in DNN on GPU technology,
+is usually not a productive strategy.
 
-The code for this step is contained in the first code cell of the IPython notebook (or in lines # through # of the file called `some_file.py`).  
+See above for a description of the model and techniques that I used.
 
-I started by reading in all the `vehicle` and `non-vehicle` images.  Here is an example of one of each of the `vehicle` and `non-vehicle` classes:
-
-![alt text][image1]
-
-I then explored different color spaces and different `skimage.hog()` parameters (`orientations`, `pixels_per_cell`, and `cells_per_block`).  I grabbed random images from each of the two classes and displayed them to get a feel for what the `skimage.hog()` output looks like.
-
-Here is an example using the `YCrCb` color space and HOG parameters of `orientations=8`, `pixels_per_cell=(8, 8)` and `cells_per_block=(2, 2)`:
-
-
-![alt text][image2]
-
-#### 2. Explain how you settled on your final choice of HOG parameters.
-
-I tried various combinations of parameters and...
-
-#### 3. Describe how (and identify where in your code) you trained a classifier using your selected HOG features (and color features if you used them).
-
-I trained a linear SVM using...
-
+---
 ### Sliding Window Search
 
-#### 1. Describe how (and identify where in your code) you implemented a sliding window search.  How did you decide what scales to search and how much to overlap windows?
+As explained above, using a pure convolutional neural network (with no fully connected layers), as well as clever combinations
+of stride and dilation effectively implement windowing within the CNN, keeping the related computation on the GPU.
 
-I decided to search random window positions at random scales all over the image and came up with this (ok just kidding I didn't actually ;):
+See above for a description of the scales and rectangles that are "searched" using the CNN.
 
-![alt text][image3]
+Here's the first example image with resulting raw rectangles, and the associated heat map:
 
-#### 2. Show some examples of test images to demonstrate how your pipeline is working.  What did you do to optimize the performance of your classifier?
+![alt text][image07]
 
-Ultimately I searched on two scales using YCrCb 3-channel HOG features plus spatially binned color and histograms of color in the feature vector, which provided a nice result.  Here are some example images:
+![alt text][image08]
 
-![alt text][image4]
 ---
-
 ### Video Implementation
 
-#### 1. Provide a link to your final video output.  Your pipeline should perform reasonably well on the entire project video (somewhat wobbly or unstable bounding boxes are ok as long as you are identifying the vehicles most of the time with minimal false positives.)
-Here's a [link to my video result](./project_video.mp4)
+Here's a [link to the vehicle detection video](./videos/vehicle.mp4), and here's the
+[combined lane finding and vehicle detection video](./videos/combined.mp4). These are in the `videos` folder.
 
+The videos are recorded at 60 frames per second. Generation of the videos took roughly 100 ms and 200 ms per frame,
+respectively (10 fps and 5 fps, respectively). To easily view individual frames, I suggest using `python ./gui_show.py`,
+and either checking the `Run` checkbox, or use the scroll bar:
 
-#### 2. Describe how (and identify where in your code) you implemented some kind of filter for false positives and some method for combining overlapping bounding boxes.
+![alt text][image09]
 
-I recorded the positions of positive detections in each frame of the video.  From the positive detections I created a heatmap and then thresholded that map to identify vehicle positions.  I then used `scipy.ndimage.measurements.label()` to identify individual blobs in the heatmap.  I then assumed each blob corresponded to a vehicle.  I constructed bounding boxes to cover the area of each blob detected.  
-
-Here's an example result showing the heatmap from a series of frames of video, the result of `scipy.ndimage.measurements.label()` and the bounding boxes then overlaid on the last frame of video:
-
-### Here are six frames and their corresponding heatmaps:
-
-![alt text][image5]
-
-### Here is the output of `scipy.ndimage.measurements.label()` on the integrated heatmap from all six frames:
-![alt text][image6]
-
-### Here the resulting bounding boxes are drawn onto the last frame in the series:
-![alt text][image7]
-
-
+As explained above, the `HeatMap` class implements combining of overlapping raw rectangles, combining information across
+multiple frames, as well as thresholding. All of these help avoid false positives.
 
 ---
-
 ### Discussion
 
 #### 1. Briefly discuss any problems / issues you faced in your implementation of this project.  Where will your pipeline likely fail?  What could you do to make it more robust?
 
 Here I'll talk about the approach I took, what techniques I used, what worked and why, where the pipeline might fail and how I might improve it if I were going to pursue this project further.  
-
