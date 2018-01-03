@@ -424,7 +424,7 @@ class HeatMap(object):
     self._adjustHeat(rects, self._weights[0])
     self._rects.appendleft(rects)
     assert len(self._rects) <= len(self._weights)
-    print("New Max: {}".format(self._heat.max()))
+    # print("New Max: {}".format(self._heat.max()))
 
   def _convertRects(self, rects):
     """ Given initial rectangles, scale them to our heat tensor. """
@@ -465,14 +465,14 @@ class HeatMap(object):
       ys, xs = (labels == i).nonzero()
       rc = ((q * min(xs), q * min(ys)), (q * (max(xs) + 1), q * (max(ys) + 1)))
       if rc[1][0] - rc[0][0] < dzMin or rc[1][1] - rc[0][1] < dzMin:
-        print("Rejected for size: {}".format(rc))
+        # print("Rejected for size: {}".format(rc))
         continue
 
       # Ignore blobs whose max is too small.
       tmp = self._heat[labels == i]
       hi = tmp.max()
       if hi < self._threshHi:
-        print("Rejected for max: {}, {}".format(rc, hi))
+        # print("Rejected for max: {}, {}".format(rc, hi))
         continue
 
       # print("  Min/max for {} is {}/{}".format(rc, tmp.min(), hi))

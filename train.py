@@ -53,7 +53,7 @@ def _loadAndSplitData(rand, frac=0.9, useFlips=True, mono=False):
 def _run():
   rand = np.random.RandomState(42)
 
-  layers, weights = _model.buildModel(rand, batchSize=None)
+  layers, weights = _model.buildModel(rand, batchSize=None, sampleMode=4)
 
   for k, v in weights.items():
     print("Weight '{}' has shape {}".format(k, v.get_shape()))
