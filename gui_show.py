@@ -93,6 +93,8 @@ class Application(_tk.Frame):
     # To run through the frames.
     self.runVar = _tk.IntVar(master=frame, value=0)
     _tk.Checkbutton(master=frame, variable=self.runVar, text='Run', command=self._runToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
+    self.loopVar = _tk.IntVar(master=frame, value=0)
+    _tk.Checkbutton(master=frame, variable=self.loopVar, text='Loop', command=self._loopToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
     _tk.Button(master=frame, text='Reset', command=self._resetState).pack(side=_tk.LEFT, padx=padx, pady=pady)
     self.flipVar = _tk.IntVar(master=frame, value=0)
     _tk.Checkbutton(master=frame, variable=self.flipVar, text='Flip Horizontally', command=self._flipToggle).pack(side=_tk.LEFT, padx=padx, pady=pady)
@@ -280,12 +282,15 @@ class Application(_tk.Frame):
     if self._data is not None:
       self._data.setRunning(self._running)
 
+  def _loopToggle(self):
+    pass
+
   def _fetch(self):
     """ If we're 'running', advance to the next frame. """
     if not self._running:
       return
 
-    if not self._data.next():
+    if not self._data.next(self.loopVar.get() != 0):
       self._stop()
       return
 
@@ -602,14 +607,20 @@ class ImageData(object):
       index = max(0, min(self.count - 1, index))
     return self._loadPixels(index)
 
-  def next(self):
+  def next(self, loop=False):
     index = self._index + 1
-    if self._seekable:
-      index = min(self.count - 1, index)
+    if self._seekable and index >= self.count:
+      if not loop:
+        return False
+      index = 0
     return self._loadPixels(index)
 
-  def prev(self):
-    index = max(0, self._index - 1)
+  def prev(self, loop=False):
+    index = self._index - 1
+    if index < 0 and self._seekable:
+      if not loop:
+        return False
+      index = self.count - 1
     return self._loadPixels(index)
 
   def _loadPixels(self, index):
