@@ -689,7 +689,7 @@ class ImageDataFromPictures(ImageData):
 
 def _run(logger):
   app = Application(logger)
-  app.master.title('Image viewing application')
+  app.master.title('Xevo AI Data Viewer')
 
   # Load initial data set, once the mainloop is spun up.
   app.after(1, app.loadVideo)
